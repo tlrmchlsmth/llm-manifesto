@@ -1,7 +1,7 @@
 """Tests for warning-only validation around risky parallelism combinations."""
 
-from jllmd.spec import DeploymentSpec
-from jllmd.warnings import collect_warnings
+from manifesto.spec import DeploymentSpec
+from manifesto.warnings import collect_warnings
 
 
 def _spec_with_role(role: dict) -> dict:

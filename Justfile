@@ -1,4 +1,4 @@
-# Lifecycle, renderer, dev, monitoring, and Nyann benchmark commands for j-llm-d.
+# Lifecycle, renderer, dev, monitoring, and Nyann benchmark commands for manifesto.
 set dotenv-load
 set dotenv-required
 
@@ -10,14 +10,12 @@ KN := "kubectl -n " + NAMESPACE
 
 NAME_PREFIX := env("USER", "dev")
 DEPLOY_NAME := NAME_PREFIX + "-wide-ep"
-POKER_NAME := NAME_PREFIX + "-poker"
 DEV_POD_NAME := NAME_PREFIX + "-vllm-dev"
 
-GB200_DIR := "gb200"
 DEV_DIR := "dev"
 MONITORING_DIR := "monitoring"
-CLUSTER := env("JLLMD_CLUSTER", "clusters/oci-gb200.yaml")
-RENDER_OUT := env("JLLMD_RENDER_OUT", "/tmp/" + NAME_PREFIX + "-jllmd.yaml")
+CLUSTER := env("MANIFESTO_CLUSTER", "clusters/oci-gb200.yaml")
+RENDER_OUT := env("MANIFESTO_RENDER_OUT", "/tmp/" + NAME_PREFIX + "-manifesto.yaml")
 EDITOR := env("EDITOR", "vi")
 
 default:
@@ -26,12 +24,12 @@ default:
 # === v2 spec-based renderer ===
 
 render SPEC *ARGS='':
-  uv run j-llm-d render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}}
+  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}}
 
 render-file SPEC *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  uv run j-llm-d render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} > "{{RENDER_OUT}}"
+  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} > "{{RENDER_OUT}}"
   echo "{{RENDER_OUT}}"
 
 edit-file SPEC *ARGS='':
@@ -56,13 +54,13 @@ delete-file FILE=RENDER_OUT NOW='false':
   {{KN}} delete -f "{{FILE}}" --ignore-not-found=true $FORCE
 
 render-routing SPEC *ARGS='':
-  uv run j-llm-d render-routing {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}}
+  uv run manifesto render-routing {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}}
 
 start SPEC *ARGS='':
-  uv run j-llm-d render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
+  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
 
 deploy-routing SPEC *ARGS='':
-  uv run j-llm-d render-routing {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
+  uv run manifesto render-routing {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
 
 stop SPEC NOW='false':
   #!/usr/bin/env bash
@@ -71,12 +69,12 @@ stop SPEC NOW='false':
   if [ "{{NOW}}" = "true" ]; then
     FORCE="--grace-period=0 --force"
   fi
-  uv run j-llm-d render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} | {{KN}} delete -f - --ignore-not-found=true $FORCE
+  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} | {{KN}} delete -f - --ignore-not-found=true $FORCE
 
 restart SPEC *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  INSTANCE=$(uv run j-llm-d instance-id {{SPEC}} --user {{NAME_PREFIX}})
+  INSTANCE=$(uv run manifesto instance-id {{SPEC}} --user {{NAME_PREFIX}})
   {{KN}} delete lws -l app.kubernetes.io/instance=$INSTANCE --ignore-not-found=true --grace-period=0 --force &
   {{KN}} delete pod -l app.kubernetes.io/instance=$INSTANCE --ignore-not-found=true --grace-period=0 --force &
   wait
@@ -87,9 +85,9 @@ restart SPEC *ARGS='':
 ready SPEC:
   #!/usr/bin/env bash
   set -euo pipefail
-  INSTANCE=$(uv run j-llm-d instance-id {{SPEC}} --user {{NAME_PREFIX}})
-  EPP=$(uv run j-llm-d name {{SPEC}} infpool-epp --user {{NAME_PREFIX}})
-  GATEWAY_SVC=$(uv run j-llm-d name {{SPEC}} inference-gateway-istio --user {{NAME_PREFIX}})
+  INSTANCE=$(uv run manifesto instance-id {{SPEC}} --user {{NAME_PREFIX}})
+  EPP=$(uv run manifesto name {{SPEC}} infpool-epp --user {{NAME_PREFIX}})
+  GATEWAY_SVC=$(uv run manifesto name {{SPEC}} inference-gateway-istio --user {{NAME_PREFIX}})
   {{KN}} wait --for=condition=Ready pod -l app.kubernetes.io/instance=$INSTANCE,llm-d.ai/role=decode --timeout=1200s &
   ({{KN}} wait --for=condition=Ready pod -l app.kubernetes.io/instance=$INSTANCE,llm-d.ai/role=prefill --timeout=1200s 2>/dev/null || true) &
   {{KN}} wait --for=condition=Available deploy/$EPP --timeout=120s &
@@ -105,7 +103,7 @@ ready SPEC:
 flush-cache SPEC *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  CACHE_PATH=$(uv run j-llm-d cache-path {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}})
+  CACHE_PATH=$(uv run manifesto cache-path {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}})
   {{KN}} exec {{DEV_POD_NAME}} -- bash -c "rm -rf '$CACHE_PATH' && echo 'Compile cache flushed: $CACHE_PATH'"
 
 @print-gpus:
@@ -148,9 +146,6 @@ create-secrets:
   kubectl create secret generic hf-secret --from-literal=HF_TOKEN={{HF_TOKEN}} -n {{NAMESPACE}} \
   && kubectl create secret generic gh-token-secret --from-literal=GH_TOKEN={{GH_TOKEN}} -n {{NAMESPACE}}
 
-start-poker:
-  POKER_NAME={{POKER_NAME}} envsubst '${POKER_NAME}' < poker/poker.yaml | {{KN}} apply -f -
-
 # Fetch decode pod names and IPs and cache them
 get-decode-pods:
   #!/usr/bin/env bash
@@ -161,180 +156,11 @@ get-decode-pods:
   echo "Decode pods:"
   cat .tmp/decode_pods.txt
 
-poke:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  mkdir -p ./.tmp
-
-  # Export variables for envsubst
-  export BASE_URL="http://{{DEPLOY_NAME}}-inference-gateway-istio.{{NAMESPACE}}.svc.cluster.local"
-  export NAMESPACE="{{NAMESPACE}}"
-
-  envsubst '${BASE_URL} ${NAMESPACE}' < Justfile.remote > .tmp/Justfile.remote.tmp
-  kubectl cp .tmp/Justfile.remote.tmp {{NAMESPACE}}/{{POKER_NAME}}:/app/Justfile
-  {{KN}} exec -it {{POKER_NAME}} -- /bin/zsh
-
-
-parallel-guidellm CONCURRENT_PER_WORKER='4000' REQUESTS_PER_WORKER='4000' INPUT_LEN='128' OUTPUT_LEN='1000' N_WORKERS='4':
-  {{KN}} delete job parallel-guidellm --ignore-not-found=true \
-  && env \
-    N_WORKERS={{N_WORKERS}} \
-    MAX_CONCURRENCY={{CONCURRENT_PER_WORKER}} \
-    NUM_REQUESTS={{REQUESTS_PER_WORKER}} \
-    INPUT_LEN={{INPUT_LEN}} \
-    OUTPUT_LEN={{OUTPUT_LEN}} \
-    DEPLOY_NAME="{{DEPLOY_NAME}}" \
-    NAMESPACE="{{NAMESPACE}}" \
-    OUTPUT_PATH="parallel-guidellm-$(date +%Y%m%d-%H%M%S)" \
-    envsubst '${N_WORKERS} ${MAX_CONCURRENCY} ${NUM_REQUESTS} ${INPUT_LEN} ${OUTPUT_LEN} ${OUTPUT_PATH} ${DEPLOY_NAME} ${NAMESPACE}' \
-      < parallel-guidellm.yaml | {{KN}} apply -f -
-
-deploy_inferencepool ROUTING='load-aware':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  mkdir -p ./.tmp
-  export DEPLOY_NAME="{{DEPLOY_NAME}}"
-  export OWNER="{{NAME_PREFIX}}"
-  envsubst '${DEPLOY_NAME} ${OWNER}' < {{GB200_DIR}}/inferencepool-{{ROUTING}}.values.yaml > .tmp/inferencepool-values.yaml
-  helm upgrade --install {{DEPLOY_NAME}}-infpool \
-    oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool \
-    --version v1.5.0 \
-    -f .tmp/inferencepool-values.yaml \
-    -n {{NAMESPACE}}
-  # Restart EPP pod to pick up config changes (it reads config at startup)
-  {{KN}} delete pod -l inferencepool={{DEPLOY_NAME}}-infpool-epp --ignore-not-found=true
-  # Apply DestinationRule for the backend infpool-ip service (prevents envoy OOM
-  # from stale connection accumulation). The service name has a dynamic hash suffix
-  # so we discover it via label. Wait for the Istio controller to create it.
-  INFPOOL_IP_SVC=""
-  for i in $(seq 1 30); do
-    INFPOOL_IP_SVC=$({{KN}} get svc -l istio.io/inferencepool-name={{DEPLOY_NAME}}-infpool -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) && [ -n "$INFPOOL_IP_SVC" ] && break
-    sleep 2
-  done
-  if [ -z "$INFPOOL_IP_SVC" ]; then
-    echo "WARNING: infpool-ip service not found after 60s — skipping DestinationRule (envoy OOM fix)."
-    echo "         Apply manually later with: just apply-infpool-dr"
-  else
-    export DEPLOY_NAME INFPOOL_IP_SVC
-    envsubst '${DEPLOY_NAME} ${INFPOOL_IP_SVC}' < {{GB200_DIR}}/infpool-backend-dr.yaml | {{KN}} apply -f -
-  fi
-
-# Apply the infpool-ip DestinationRule (envoy OOM fix) if it was skipped during deploy
-apply-infpool-dr:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  INFPOOL_IP_SVC=$({{KN}} get svc -l istio.io/inferencepool-name={{DEPLOY_NAME}}-infpool -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-  if [ -z "$INFPOOL_IP_SVC" ]; then
-    echo "ERROR: infpool-ip service still not found. Is the Istio controller running?"
-    exit 1
-  fi
-  export DEPLOY_NAME="{{DEPLOY_NAME}}" INFPOOL_IP_SVC
-  envsubst '${DEPLOY_NAME} ${INFPOOL_IP_SVC}' < {{GB200_DIR}}/infpool-backend-dr.yaml | {{KN}} apply -f -
-  echo "DestinationRule applied for $INFPOOL_IP_SVC"
-
 VLLM_DEV_VENV := "/mnt/lustre/" + NAME_PREFIX + "/vllm-venv"
 VLLM_DEV_SRC := "/mnt/lustre/" + NAME_PREFIX + "/vllm-dev"
 VLLM_DEV_REMOTE := "https://github.com/vllm-project/vllm.git"
 VLLM_DEV_BRANCH := "main"
 VLLM_BUILD_JOBS := "16"
-
-VLLM_IMAGE := env("VLLM_IMAGE", "quay.io/tms/vllm-deepseekv4-custom-deepep:latest")
-FORK_REPO := env("FORK_REPO", "")
-FORK_BRANCH := env("FORK_BRANCH", "")
-
-v1-start MODE='pd' ROUTING='load-aware' DEV='false':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  export DEPLOY_NAME="{{DEPLOY_NAME}}"
-  DEPLOY_TS=$(date +%Y%m%d-%H%M%S)
-
-  # Generate wrapper kustomization with user-specific namePrefix
-  printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamePrefix: {{NAME_PREFIX}}-\nresources:\n  - overlays/{{MODE}}\n' \
-    > {{GB200_DIR}}/kustomization.yaml
-  # Render kustomize, substitute placeholders, apply in one shot (no double rollout)
-  DEV_VENV=""
-  if [ "{{DEV}}" = "true" ]; then
-    DEV_VENV="{{VLLM_DEV_VENV}}"
-    echo "Dev mode: VLLM_DEV_VENV=$DEV_VENV"
-  fi
-  kubectl kustomize {{GB200_DIR}} \
-    | sed -e "s/DEPLOY_TS_PLACEHOLDER/$DEPLOY_TS/g" \
-          -e "s/OWNER_PLACEHOLDER/{{NAME_PREFIX}}/g" \
-          -e "s|VLLM_DEV_VENV_PLACEHOLDER|$DEV_VENV|g" \
-          -e "s|LUSTRE_PREFIX_PLACEHOLDER|/mnt/lustre/{{NAME_PREFIX}}|g" \
-          -e "s|VLLM_IMAGE_PLACEHOLDER|{{VLLM_IMAGE}}|g" \
-          -e "s|FORK_REPO_PLACEHOLDER|{{FORK_REPO}}|g" \
-          -e "s|FORK_BRANCH_PLACEHOLDER|{{FORK_BRANCH}}|g" \
-    | {{KN}} apply -f -
-  rm -f {{GB200_DIR}}/kustomization.yaml
-
-  envsubst '${DEPLOY_NAME}' < {{GB200_DIR}}/gateway.yaml | {{KN}} apply -f -
-  if [ "{{MODE}}" = "pd" ]; then
-    just deploy_inferencepool pd
-  elif [ "{{MODE}}" = "agg" ]; then
-    if [ "{{ROUTING}}" = "load-aware" ]; then
-      just deploy_inferencepool agg
-    else
-      just deploy_inferencepool agg-{{ROUTING}}
-    fi
-  else
-    just deploy_inferencepool {{ROUTING}}
-  fi
-  envsubst '${DEPLOY_NAME}' < {{GB200_DIR}}/httproute.yaml | {{KN}} apply -f -
-  echo "Deployed $DEPLOY_TS"
-
-v1-stop NOW='false':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  FORCE=""
-  if [ "{{NOW}}" = "true" ]; then
-    FORCE="--grace-period=0 --force"
-  fi
-  # Kill everything in parallel
-  {{KN}} delete lws {{DEPLOY_NAME}}-decode --ignore-not-found=true $FORCE &
-  {{KN}} delete lws {{DEPLOY_NAME}}-prefill --ignore-not-found=true $FORCE &
-  helm uninstall {{DEPLOY_NAME}}-infpool -n {{NAMESPACE}} 2>/dev/null || true &
-  {{KN}} delete httproute {{DEPLOY_NAME}}-route --ignore-not-found=true &
-  {{KN}} delete gateway {{DEPLOY_NAME}}-inference-gateway --ignore-not-found=true &
-  {{KN}} delete service {{DEPLOY_NAME}}-inference-gateway-istio --ignore-not-found=true &
-  {{KN}} delete configmap {{DEPLOY_NAME}}-gateway-options --ignore-not-found=true &
-  {{KN}} delete destinationrule {{DEPLOY_NAME}}-infpool-backend --ignore-not-found=true &
-  {{KN}} delete job parallel-guidellm --ignore-not-found=true $FORCE &
-  just stop-nyann &
-  wait
-  {{KN}} delete sa {{DEPLOY_NAME}} --ignore-not-found=true
-
-v1-restart MODE='pd' ROUTING='load-aware' DEV='false':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  # Force-delete LWS to kill pods immediately, then re-apply the full stack.
-  # Non-LWS resources (gateway, httproute, infpool) are updated in place by start.
-  # Delete LWS and orphaned pods
-  {{KN}} delete lws {{DEPLOY_NAME}}-decode --ignore-not-found=true --grace-period=0 --force &
-  {{KN}} delete lws {{DEPLOY_NAME}}-prefill --ignore-not-found=true --grace-period=0 --force &
-  {{KN}} delete pod -l leaderworkerset.sigs.k8s.io/name={{DEPLOY_NAME}}-decode --ignore-not-found=true --grace-period=0 --force &
-  {{KN}} delete pod -l leaderworkerset.sigs.k8s.io/name={{DEPLOY_NAME}}-prefill --ignore-not-found=true --grace-period=0 --force &
-  wait
-  # Wait for everything to be fully gone
-  {{KN}} wait --for=delete pod -l leaderworkerset.sigs.k8s.io/name={{DEPLOY_NAME}}-decode --timeout=60s 2>/dev/null || true
-  {{KN}} wait --for=delete pod -l leaderworkerset.sigs.k8s.io/name={{DEPLOY_NAME}}-prefill --timeout=60s 2>/dev/null || true
-  just v1-start {{MODE}} {{ROUTING}} {{DEV}}
-
-# Wait for the v1 stack to be ready (pods + gateway serving)
-v1-ready:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  {{KN}} wait --for=condition=Ready pod -l llm-d.ai/role=decode,llm-d.ai/owner={{NAME_PREFIX}} --timeout=1200s &
-  ({{KN}} wait --for=condition=Ready pod -l llm-d.ai/role=prefill,llm-d.ai/owner={{NAME_PREFIX}} --timeout=1200s 2>/dev/null || true) &
-  {{KN}} wait --for=condition=Ready pod -l inferencepool={{DEPLOY_NAME}}-infpool-epp --timeout=120s &
-  echo "Waiting for decode, prefill, and EPP pods..."
-  wait
-  echo "Checking gateway..."
-  until {{KN}} exec deploy/{{DEPLOY_NAME}}-infpool-epp -- curl -sf --max-time 5 http://{{DEPLOY_NAME}}-inference-gateway-istio:80/v1/models 2>/dev/null | grep -q '"id"'
-  do
-    sleep 2
-  done
-  echo "Ready."
 
 # Show persisted logs from Lustre (survives LWS pod recreation)
 # Usage: just logs decode, just logs prefill, just logs decode -f (follow latest)
@@ -441,21 +267,6 @@ dev-build-log:
 dev-stop:
   envsubst < {{DEV_DIR}}/dev-pod.yaml | {{KN}} delete -f - --ignore-not-found=true
 
-# Download model weights to local NVMe on all GPU nodes (apply, wait, cleanup)
-cache-model:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  {{KN}} delete daemonset model-cache --ignore-not-found=true
-  {{KN}} apply -f {{GB200_DIR}}/model-cache-ds.yaml
-  echo "Waiting for all nodes to finish downloading..."
-  {{KN}} rollout status daemonset/model-cache --timeout=30m
-  echo "All nodes cached. Cleaning up DaemonSet..."
-  {{KN}} delete daemonset model-cache
-
-# Flush vLLM/FlashInfer compile caches on Lustre (run after image or config changes)
-v1-flush-cache:
-  {{KN}} exec {{DEV_POD_NAME}} -- bash -c 'rm -rf /mnt/lustre/{{NAME_PREFIX}}/vllm_cache_extdp /mnt/lustre/{{NAME_PREFIX}}/flashinfer_cache_extdp /mnt/lustre/{{NAME_PREFIX}}/fa_cute_dsl_cache /mnt/lustre/{{NAME_PREFIX}}/tilelang_cache /mnt/lustre/{{NAME_PREFIX}}/flashinfer_workspace && echo "Compile caches flushed"'
-
 NYANN_BENCH_DIR := env("NYANN_BENCH_DIR", "")
 NYANN_LOAD_JOB := NAME_PREFIX + "-sharegpt-load"
 NYANN_EVAL_JOB := NAME_PREFIX + "-nyann-eval"
@@ -506,12 +317,6 @@ nyann CONCURRENCY='14400' DURATION='600s' ISL='500' OSL='1500' EVAL_CONCURRENCY=
     wait
     echo "nyann-bench jobs submitted. Use 'just nyann-logs load' or 'just nyann-logs eval' to follow."
 
-benchmark-stairs SWEEP_MIN='1600' SWEEP_MAX='14400' STEPS='10' STEP_DURATION='300s' ISL='500' OSL='1500' EVAL_CONCURRENCY='16':
-  just nyann-stairs {{SWEEP_MIN}} {{SWEEP_MAX}} {{STEPS}} {{STEP_DURATION}} {{ISL}} {{OSL}} {{EVAL_CONCURRENCY}}
-
-benchmark-constant CONCURRENCY='14400' DURATION='600s' ISL='500' OSL='1500' EVAL_CONCURRENCY='16':
-  just nyann {{CONCURRENCY}} {{DURATION}} {{ISL}} {{OSL}} {{EVAL_CONCURRENCY}}
-
 LUSTRE_DATA := "/mnt/lustre/" + NAME_PREFIX
 EVAL_BASE_URL := "http://" + DEPLOY_NAME + "-inference-gateway-istio." + NAMESPACE + ".svc.cluster.local/v1"
 
@@ -539,23 +344,12 @@ nyann-eval-gpqa CONCURRENCY='64':
 # Run both evals in parallel
 nyann-eval: (nyann-eval-gsm8k) (nyann-eval-gpqa)
 
-eval-gsm8k CONCURRENCY='64':
-  just nyann-eval-gsm8k {{CONCURRENCY}}
-
-eval-gpqa CONCURRENCY='64':
-  just nyann-eval-gpqa {{CONCURRENCY}}
-
-eval: (nyann-eval)
-
 # Prep GPQA dataset on Lustre (if missing or empty)
 nyann-prep-gpqa:
     #!/usr/bin/env bash
     set -euo pipefail
     cd "{{NYANN_BENCH_DIR}}"
     just prep-gpqa "{{LUSTRE_DATA}}" {{NAMESPACE}}
-
-prep-gpqa:
-  just nyann-prep-gpqa
 
 # Stop nyann-bench benchmark jobs
 nyann-stop:
@@ -577,9 +371,6 @@ nyann-logs TARGET='load':
     *) APP="{{TARGET}}" ;;
   esac
   {{KN}} logs -l app="$APP" -c nyann-bench --tail=50 -f --max-log-requests=20
-
-stop-nyann:
-  just nyann-stop
 
 # Query Prometheus for per-stage benchmark metrics (requires port-forward: just prometheus)
 query-prometheus CLIENT_JOB=(NAME_PREFIX + "-sharegpt-load") DEPLOYMENT=DEPLOY_NAME EVAL_JOB=(NAME_PREFIX + "-nyann-eval") *ARGS='':

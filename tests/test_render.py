@@ -4,9 +4,9 @@ from pathlib import Path
 
 import yaml
 
-from jllmd.cluster import load_cluster
-from jllmd.render import render, render_to_yaml
-from jllmd.spec import load_spec
+from manifesto.cluster import load_cluster
+from manifesto.render import render, render_to_yaml
+from manifesto.spec import load_spec
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -53,7 +53,7 @@ def _print_warnings(spec) -> None:
 
 def _manifest_header(args: argparse.Namespace, *, user: str, routing_only: bool) -> list[str]:
     command = [
-        "j-llm-d",
+        "manifesto",
         "render-routing" if routing_only else "render",
         args.spec,
         "--cluster",
@@ -89,7 +89,7 @@ def _add_render_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="j-llm-d")
+    parser = argparse.ArgumentParser(prog="manifesto")
     sub = parser.add_subparsers(dest="command", required=True)
 
     render_parser = sub.add_parser("render")

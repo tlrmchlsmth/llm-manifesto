@@ -1,6 +1,6 @@
 """Tests for the multi-tenant instance naming, selector, and path invariants."""
 
-from jllmd.instance import Instance
+from manifesto.instance import Instance
 
 
 def test_names_are_prefixed_and_hostname_safe():

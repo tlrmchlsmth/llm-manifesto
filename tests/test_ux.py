@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from jllmd.cluster import load_cluster
-from jllmd.instance import Instance
-from jllmd.render import render
-from jllmd.resolve import resolve_role
-from jllmd.spec import DpLoadBalancing, RoutingKind, load_spec
+from manifesto.cluster import load_cluster
+from manifesto.instance import Instance
+from manifesto.render import render
+from manifesto.resolve import resolve_role
+from manifesto.spec import DpLoadBalancing, RoutingKind, load_spec
 
 
 ROOT = Path(__file__).resolve().parents[1]

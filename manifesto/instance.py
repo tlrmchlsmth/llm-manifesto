@@ -47,7 +47,7 @@ class Instance:
 
     def labels(self, component: str | None = None, role: str | None = None) -> dict[str, str]:
         labels = {
-            "app.kubernetes.io/name": "j-llm-d",
+            "app.kubernetes.io/name": "manifesto",
             "app.kubernetes.io/instance": self.instance_id,
             "llm-d.ai/owner": self.user_slug,
         }

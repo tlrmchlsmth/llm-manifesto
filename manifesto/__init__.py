@@ -1,4 +1,4 @@
-"""j-llm-d v2 manifest renderer."""
+"""manifesto v2 manifest renderer."""
 
 __all__ = ["__version__"]
 
