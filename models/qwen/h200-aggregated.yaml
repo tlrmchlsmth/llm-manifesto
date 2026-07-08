@@ -5,7 +5,7 @@ topology: aggregated
 model:
   id: Qwen/Qwen3.6-35B-A3B
   label: Qwen3.6-35B-A3B
-  image: vllm/vllm-openai:v0.24.0
+  image_ref: vllm.standard
 
 cache: {gpu_arch: h200}
 routing: {kind: load_aware, target_role: decode}

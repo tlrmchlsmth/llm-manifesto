@@ -29,6 +29,26 @@ def test_cache_path_cli_accepts_cluster_template_override(capsys):
     assert capsys.readouterr().out.strip() == "/tmp/cache/tester-name/wide-ep-1p-ep8-1d-ep8/cu13"
 
 
+def test_log_path_cli_accepts_cluster_template_override(capsys):
+    rc = main(
+        [
+            "log-path",
+            str(MODEL),
+            "--cluster",
+            str(CLUSTER),
+            "--user",
+            "Tester.Name",
+            "--role",
+            "prefill",
+            "--log-root",
+            "/logs/{user}/{release}",
+        ]
+    )
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "/logs/tester-name/wide-ep-1p-ep8-1d-ep8/prefill"
+
+
 def test_render_cli_dev_venv_override(capsys):
     rc = main(
         [

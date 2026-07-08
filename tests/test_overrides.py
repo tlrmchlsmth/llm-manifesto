@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from manifesto.cluster import load_cluster
+from manifesto.images import DEFAULT_IMAGES
 from manifesto.overrides import merge_overrides
 from manifesto.spec import load_spec
 
@@ -59,7 +60,7 @@ def test_deepseek_v4_llmd_guide_variants_expand(
 
     assert spec.topology == "pd"
     assert spec.model.id == "deepseek-ai/DeepSeek-V4-Pro"
-    assert spec.model.image == "vllm/vllm-openai:v0.23.0"
+    assert spec.model.image == DEFAULT_IMAGES.get("vllm.standard")
 
     assert prefill.lws.size == 2
     assert prefill.lws.replicas == prefill_replicas

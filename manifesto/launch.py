@@ -12,15 +12,27 @@ from .spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 
 def _flag_name(name: str) -> str:
+    if "." in name:
+        return "--" + name
     return "--" + name.replace("_", "-")
+
+
+def _format_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)
 
 
 def _format_arg(name: str, value: Any) -> list[str]:
     flag = _flag_name(name)
+    if "." in name:
+        return [f"{flag}={shlex.quote(_format_value(value))}"]
     if isinstance(value, bool):
         return [flag] if value else []
     if isinstance(value, (dict, list)):
-        return [flag, shlex.quote(json.dumps(value, separators=(",", ":")))]
+        return [flag, shlex.quote(_format_value(value))]
     return [flag, shlex.quote(str(value))]
 
 
@@ -29,7 +41,7 @@ def build_launch_script(
     role: RoleSpec,
     ports: RolePorts,
     *,
-    user_root: str,
+    log_dir: str,
     dev_source: str,
     vllm_args: dict[str, Any] | None = None,
 ) -> str:
@@ -37,7 +49,7 @@ def build_launch_script(
     external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
     lines = [
         "set -euo pipefail",
-        f"LOG_DIR={shlex.quote(user_root + '/logs/' + role.name)}",
+        f"LOG_DIR={shlex.quote(log_dir)}",
         'mkdir -p "$LOG_DIR"',
         'LOG_FILE="$LOG_DIR/${HOSTNAME}_$(date +%Y%m%d-%H%M%S).log"',
         'exec > >(tee -a "$LOG_FILE") 2>&1',

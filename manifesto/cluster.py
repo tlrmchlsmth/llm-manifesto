@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from .equations import render_mapping
+from .images import DEFAULT_IMAGES, ImageCatalog
 
 
 @dataclass(frozen=True)
@@ -18,15 +19,16 @@ class LlmdImages:
     routing_sidecar: str
 
     @classmethod
-    def from_config(cls, data: dict[str, Any]) -> "LlmdImages":
-        release = data.get("release", "v0.8.0")
-        images = data.get("images", {})
+    def from_config(cls, data: dict[str, Any], catalog: ImageCatalog = DEFAULT_IMAGES) -> "LlmdImages":
+        release = str(data.get("release", catalog.get("llm_d.release")))
+        templates = data.get("images", {})
         return cls(
             release=release,
-            epp=images.get("epp", "ghcr.io/llm-d/llm-d-inference-scheduler:{release}").format(release=release),
-            routing_sidecar=images.get("routing_sidecar", "ghcr.io/llm-d/llm-d-routing-sidecar:{release}").format(
-                release=release
-            ),
+            epp=templates.get("epp", catalog.get("llm_d.epp", release=release)).format(release=release),
+            routing_sidecar=templates.get(
+                "routing_sidecar",
+                catalog.get("llm_d.routing_sidecar", release=release),
+            ).format(release=release),
         )
 
 
@@ -50,9 +52,13 @@ class Cluster:
     rdma_resource_name: str | None = None
     rdma_resource_value: str = "1"
     user_root_template: str = "/mnt/lustre/{user}"
+    log_root_template: str = "/mnt/lustre/{user}/logs"
+    logging_pvc: str | None = None
+    logging_mount_path: str = "/mnt/logs"
     cache_root_template: str = "/mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}"
     dev_venv_template: str = "/mnt/lustre/{user}/vllm-venv"
     dev_source_template: str = "/mnt/lustre/{user}/vllm-dev"
+    images: ImageCatalog = DEFAULT_IMAGES
 
     def base_volumes(self) -> list[dict]:
         volumes = [
@@ -80,9 +86,20 @@ class Cluster:
                     {"name": "local-nvme", "hostPath": {"path": self.local_nvme_path, "type": "Directory"}},
                 ]
             )
+        if self.logging_pvc and self.logging_mount_path not in self._base_mount_paths():
+            volumes.append({"name": "logs", "persistentVolumeClaim": {"claimName": self.logging_pvc}})
         return volumes
 
     def volume_mounts(self) -> list[dict]:
+        mounts = self._base_volume_mounts()
+        if self.logging_pvc and self.logging_mount_path not in self._base_mount_paths():
+            mounts.append({"name": "logs", "mountPath": self.logging_mount_path})
+        return mounts
+
+    def _base_mount_paths(self) -> set[str]:
+        return {mount["mountPath"] for mount in self._base_volume_mounts()}
+
+    def _base_volume_mounts(self) -> list[dict]:
         if self.hf_cache_host_path and self.jit_cache_host_path:
             return [
                 {"name": "dshm", "mountPath": "/dev/shm"},
@@ -97,6 +114,9 @@ class Cluster:
 
     def user_root(self, *, user: str, release: str) -> str:
         return self._format_path(self.user_root_template, user=user, release=release)
+
+    def log_root(self, *, user: str, release: str) -> str:
+        return self._format_path(self.log_root_template, user=user, release=release)
 
     def cache_root(self, *, user: str, release: str, gpu_arch: str, cuda: str, vllm_version: str) -> str:
         return self._format_path(
@@ -118,6 +138,7 @@ class Cluster:
         self,
         *,
         user_root: str | None = None,
+        log_root: str | None = None,
         cache_root: str | None = None,
         dev_venv: str | None = None,
         dev_source: str | None = None,
@@ -141,9 +162,13 @@ class Cluster:
             rdma_resource_name=self.rdma_resource_name,
             rdma_resource_value=self.rdma_resource_value,
             user_root_template=user_root or self.user_root_template,
+            log_root_template=log_root or self.log_root_template,
+            logging_pvc=self.logging_pvc,
+            logging_mount_path=self.logging_mount_path,
             cache_root_template=cache_root or self.cache_root_template,
             dev_venv_template=dev_venv or self.dev_venv_template,
             dev_source_template=dev_source or self.dev_source_template,
+            images=self.images,
         )
 
     def _format_path(self, template: str, **values: str) -> str:
@@ -175,6 +200,8 @@ def load_cluster(path: str | Path) -> Cluster:
     fabric = data.get("fabric", {})
     cache = data.get("cache", {})
     rdma = data.get("rdma", {})
+    logging = data.get("logging", {})
+    user_root = paths.get("user_root", "/mnt/lustre/{user}")
     return Cluster(
         name=data["name"],
         gpus_per_node=int(data.get("gpus_per_node", 4)),
@@ -182,7 +209,7 @@ def load_cluster(path: str | Path) -> Cluster:
         local_nvme_path=data["storage"].get("local_nvme_path", "/mnt/numa0"),
         shm_size=data.get("pod_defaults", {}).get("shm_size", "2Gi"),
         ucx_net_devices=fabric["ucx_net_devices"],
-        llm_d=LlmdImages.from_config(data.get("llm_d", {})),
+        llm_d=LlmdImages.from_config(data.get("llm_d", {}), DEFAULT_IMAGES),
         fabric_default_profile=fabric.get("default_profile", "standard"),
         fabric_role_profiles=fabric.get("expert_parallel_profiles", {}),
         fabric_default_env=fabric.get("default_env", {}),
@@ -193,11 +220,15 @@ def load_cluster(path: str | Path) -> Cluster:
         hf_home=cache.get("hf_home", "/mnt/local/hf_cache"),
         rdma_resource_name=rdma.get("resource_name"),
         rdma_resource_value=str(rdma.get("value", "1")),
-        user_root_template=paths.get("user_root", "/mnt/lustre/{user}"),
+        user_root_template=user_root,
+        log_root_template=logging.get("root", paths.get("log_root", f"{user_root}/logs")),
+        logging_pvc=logging.get("pvc"),
+        logging_mount_path=logging.get("mount_path", "/mnt/logs"),
         cache_root_template=paths.get(
             "cache_root",
             "/mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}",
         ),
         dev_venv_template=dev.get("venv", "/mnt/lustre/{user}/vllm-venv"),
         dev_source_template=dev.get("source", "/mnt/lustre/{user}/vllm-dev"),
+        images=DEFAULT_IMAGES,
     )

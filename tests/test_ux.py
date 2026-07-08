@@ -103,6 +103,7 @@ def test_single_gpu_no_dp_role_derives_one_gpu_from_tp():
 def test_cluster_path_templates_feed_cache_dev_and_logs():
     cluster = CLUSTER.with_path_overrides(
         user_root="/vol/{user}",
+        log_root="/logs/{user}/{release}",
         cache_root="/cache/{user}/{release}/{gpu_arch}/{cuda}/{vllm_version}",
         dev_venv="/venvs/{user}/{release}",
         dev_source="/src/{user}",
@@ -119,7 +120,7 @@ def test_cluster_path_templates_feed_cache_dev_and_logs():
 
     assert resolved.env["VLLM_DEV_VENV"] == "/venvs/tester-name/wide-ep-1p-ep8-1d-ep8"
     assert resolved.env["VLLM_CACHE_ROOT"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/dev/vllm"
-    assert "LOG_DIR=/vol/tester-name/logs/decode" in script
+    assert "LOG_DIR=/logs/tester-name/wide-ep-1p-ep8-1d-ep8/decode" in script
     assert "find /src/tester-name/vllm" in script
     assert "ucx-lib" not in script
 

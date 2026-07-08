@@ -71,6 +71,8 @@ just start models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 just ready models/deepseek-v4/1P-EP8-1D-EP8.yaml
 just restart models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 just stop models/deepseek-v4/1P-EP8-1D-EP8.yaml
+just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode
+just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode -f
 ```
 
 Monitoring and diagnostics:
@@ -79,7 +81,6 @@ Monitoring and diagnostics:
 just get-decode-pods
 just print-gpus
 just cks-nodes
-just check-ib
 just start-monitoring
 just grafana
 just prometheus
@@ -116,6 +117,8 @@ just nyann-stop
 - `pyproject.toml` - Python package metadata and test configuration.
 - `Justfile` - Local automation, deployment, dev, monitoring, and benchmark
   commands.
+- `config/images.yaml` - Central image catalog for model, llm-d, sidecar, and
+  dev images.
 - `clusters/oci-gb200.yaml` - GB200 cluster profile.
 - `clusters/cks-h200.yaml` - CoreWeave H200 cluster profile.
 - `models/qwen/aggregated.yaml` - Aggregated Qwen example.

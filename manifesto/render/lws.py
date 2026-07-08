@@ -15,7 +15,11 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
     resolved = resolve_role(spec, instance, cluster, role)
     external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
 
-    containers, extra_volumes = sidecars(spec.runtime.sidecars, dcgm_config_name=instance.name("dcgm-metrics"))
+    containers, extra_volumes = sidecars(
+        spec.runtime.sidecars,
+        dcgm_config_name=instance.name("dcgm-metrics"),
+        images=cluster.images,
+    )
     volumes = cluster.base_volumes()
     if role.shm_size:
         volumes[0]["emptyDir"]["sizeLimit"] = role.shm_size
@@ -72,7 +76,7 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
                 spec,
                 role,
                 resolved.ports,
-                user_root=resolved.user_root,
+                log_dir=resolved.log_dir,
                 dev_source=resolved.dev_source,
                 vllm_args=resolved.vllm_args,
             )

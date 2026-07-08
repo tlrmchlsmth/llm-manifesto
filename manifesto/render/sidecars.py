@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from ..images import DEFAULT_IMAGES, ImageCatalog
 
-def sidecars(names: list[str], *, dcgm_config_name: str = "dcgm-custom-metrics") -> tuple[list[dict], list[dict]]:
+
+def sidecars(
+    names: list[str],
+    *,
+    dcgm_config_name: str = "dcgm-custom-metrics",
+    images: ImageCatalog = DEFAULT_IMAGES,
+) -> tuple[list[dict], list[dict]]:
     containers: list[dict] = []
     volumes: list[dict] = []
     if "dcgm-exporter" in names:
@@ -16,7 +23,7 @@ def sidecars(names: list[str], *, dcgm_config_name: str = "dcgm-custom-metrics")
         containers.append(
             {
                 "name": "dcgm-exporter",
-                "image": "nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04",
+                "image": images.get("sidecars.dcgm_exporter"),
                 "imagePullPolicy": "IfNotPresent",
                 "args": ["-f", "/etc/dcgm-exporter/custom-counters.csv"],
                 "ports": [{"containerPort": 9400, "name": "dcgm", "protocol": "TCP"}],
@@ -44,7 +51,7 @@ def sidecars(names: list[str], *, dcgm_config_name: str = "dcgm-custom-metrics")
         containers.append(
             {
                 "name": "node-exporter",
-                "image": "quay.io/prometheus/node-exporter:v1.9.0",
+                "image": images.get("sidecars.node_exporter"),
                 "imagePullPolicy": "IfNotPresent",
                 "args": [
                     "--collector.disable-defaults",

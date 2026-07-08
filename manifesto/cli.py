@@ -49,6 +49,7 @@ def _render(args: argparse.Namespace, *, routing_only: bool = False) -> int:
 def _load_cluster(args: argparse.Namespace):
     return load_cluster(args.cluster).with_path_overrides(
         user_root=getattr(args, "user_root", None),
+        log_root=getattr(args, "log_root", None),
         cache_root=getattr(args, "cache_root", None),
         dev_venv=getattr(args, "dev_venv", None),
         dev_source=getattr(args, "dev_source", None),
@@ -86,7 +87,7 @@ def _manifest_header(args: argparse.Namespace, *, user: str, routing_only: bool)
     ])
     if getattr(args, "dev", False):
         command.append("--dev")
-    for name in ("user_root", "cache_root", "dev_venv", "dev_source"):
+    for name in ("user_root", "log_root", "cache_root", "dev_venv", "dev_source"):
         value = getattr(args, name, None)
         if value:
             command.extend([f"--{name.replace('_', '-')}", value])
@@ -106,6 +107,7 @@ def _add_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--user")
     parser.add_argument("--dev", action="store_true")
     parser.add_argument("--user-root")
+    parser.add_argument("--log-root")
     parser.add_argument("--cache-root")
     parser.add_argument("--dev-venv")
     parser.add_argument("--dev-source")
@@ -165,10 +167,23 @@ def main(argv: list[str] | None = None) -> int:
     cache_parser.add_argument("--cluster", required=True)
     cache_parser.add_argument("--user")
     cache_parser.add_argument("--user-root")
+    cache_parser.add_argument("--log-root")
     cache_parser.add_argument("--cache-root")
     cache_parser.add_argument("--dev-venv")
     cache_parser.add_argument("--dev-source")
     cache_parser.set_defaults(func=_cache_path)
+
+    log_parser = sub.add_parser("log-path", help="print the resolved persisted log directory")
+    log_parser.add_argument("spec")
+    log_parser.add_argument("--cluster", required=True)
+    log_parser.add_argument("--user")
+    log_parser.add_argument("--role", required=True)
+    log_parser.add_argument("--user-root")
+    log_parser.add_argument("--log-root")
+    log_parser.add_argument("--cache-root")
+    log_parser.add_argument("--dev-venv")
+    log_parser.add_argument("--dev-source")
+    log_parser.set_defaults(func=_log_path)
 
     render_file_parser = sub.add_parser("render-file", help="render a full manifest to the workflow file")
     _add_render_args(render_file_parser)
@@ -246,6 +261,15 @@ def _cache_path(args: argparse.Namespace) -> int:
             vllm_version=spec.cache.vllm_version,
         )
     )
+    return 0
+
+
+def _log_path(args: argparse.Namespace) -> int:
+    user = args.user or os.environ.get("USER") or "dev"
+    cluster = _load_cluster(args)
+    spec = load_spec(args.spec)
+    instance = Instance(user=user, release=spec.release)
+    print(f"{cluster.log_root(user=instance.user_slug, release=instance.release_slug)}/{args.role}")
     return 0
 
 

@@ -4,13 +4,15 @@ gpus_per_node: 4
 
 llm_d:
   release: v0.8.0
-  images:
-    epp: ghcr.io/llm-d/llm-d-inference-scheduler:{release}
-    routing_sidecar: ghcr.io/llm-d/llm-d-routing-sidecar:{release}
 
 storage:
   lustre_pvc: lustre-pvc-vllm
   local_nvme_path: /mnt/numa0
+
+logging:
+  pvc: lustre-pvc-vllm
+  mount_path: /mnt/lustre
+  root: /mnt/lustre/{user}/logs
 
 pod_defaults:
   shm_size: 2Gi

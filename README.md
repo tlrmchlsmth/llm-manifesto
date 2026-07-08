@@ -110,7 +110,7 @@ topology: pd
 
 model:
   id: deepseek-ai/DeepSeek-V4-Pro
-  image: vllm/vllm-openai:v0.24.0
+  image_ref: vllm.standard
 
 vars:
   max_concurrency: 1024
@@ -131,6 +131,10 @@ roles:
 
 `tp` and `dp` are global sizes. Local DP, port fanout, and per-pod launch
 arguments are derived from the LWS size and GPUs per pod.
+
+Image versions are centralized in `config/images.yaml`. Model specs should use
+`model.image_ref`, with `vllm.standard` as the shared vLLM image reference,
+unless a spec needs an explicit one-off `model.image`.
 
 Specs can also extend a base YAML file and override only the fields that differ:
 
@@ -168,8 +172,8 @@ spec:
 
 - GPUs per node
 - Lustre and local NVMe mounts
-- user, cache, and dev venv path templates
-- llm-d release and EPP/routing-sidecar images
+- user, log, cache, and dev venv path templates
+- llm-d release
 - UCX/NCCL/NVSHMEM/IMEX fabric env profiles
 
 The workflow CLI requires a cluster profile for commands that render a spec. Set
@@ -184,6 +188,20 @@ manifesto deploy models/qwen/h200-aggregated.yaml
 The namespace defaults to the current kube context namespace, falling back to
 `default` when the context has no namespace. Set `MANIFESTO_NAMESPACE` in `.env`
 to override it.
+
+Model-server stdout/stderr is persisted by the generated launch script. Configure
+the backing PVC and root path in the cluster profile:
+
+```yaml
+logging:
+  pvc: lustre-pvc-vllm
+  mount_path: /mnt/lustre
+  root: /mnt/lustre/{user}/logs
+```
+
+The rendered pods tee logs to `{root}/{role}`. For the OCI GB200 profile this is
+the same Lustre-backed path used by the old j-llm-d manifests:
+`/mnt/lustre/<user>/logs/decode` and `/mnt/lustre/<user>/logs/prefill`.
 
 ## Manual Manifest Workflow
 
@@ -220,6 +238,8 @@ Examples:
 manifesto deploy models/qwen/aggregated.yaml
 manifesto deploy models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 manifesto deploy-routing models/deepseek-v4/1P-EP8-1D-EP8.yaml
+just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode
+just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode -f
 ```
 
 Every rendered object is scoped by the instance identity:

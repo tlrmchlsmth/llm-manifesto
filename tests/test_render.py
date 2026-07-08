@@ -1,10 +1,12 @@
 """Structural tests for rendered Kubernetes objects and YAML serialization."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
 
 from manifesto.cluster import load_cluster
+from manifesto.images import DEFAULT_IMAGES
 from manifesto.render import render, render_to_yaml
 from manifesto.spec import load_spec
 
@@ -59,6 +61,40 @@ def test_dp_ports_feed_container_readiness_and_inferencepool():
     assert "--data-parallel-rank" not in script
 
 
+def test_logs_persist_to_cluster_log_root():
+    objects = _objects(DEEPSEEK)
+    lws = _find(objects, "LeaderWorkerSet", "decode")
+    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+    container = pod_spec["containers"][0]
+    script = container["args"][0]
+    volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
+    mounts = {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]}
+
+    assert volumes["lustre"]["persistentVolumeClaim"]["claimName"] == "lustre-pvc-vllm"
+    assert mounts["lustre"] == "/mnt/lustre"
+    assert "LOG_DIR=/mnt/lustre/tester/logs/decode" in script
+
+
+def test_dedicated_logging_pvc_is_mounted_when_configured():
+    cluster = replace(
+        CLUSTER,
+        logging_pvc="logs-pvc",
+        logging_mount_path="/mnt/logs",
+        log_root_template="/mnt/logs/{user}/{release}",
+    )
+    spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
+    objects = render(spec, user="tester", cluster=cluster)
+    lws = _find(objects, "LeaderWorkerSet", "decode")
+    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+    container = pod_spec["containers"][0]
+    volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
+    mounts = {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]}
+
+    assert volumes["logs"]["persistentVolumeClaim"]["claimName"] == "logs-pvc"
+    assert mounts["logs"] == "/mnt/logs"
+    assert "LOG_DIR=/mnt/logs/tester/wide-ep-1p-ep8-1d-ep8/decode" in container["args"][0]
+
+
 def test_no_dp_qwen_uses_single_port_and_no_dp_flags():
     objects = _objects("qwen/aggregated.yaml")
     lws = _find(objects, "LeaderWorkerSet", "decode")
@@ -95,7 +131,7 @@ def test_epp_uses_current_config_file_flag():
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     args = container["args"]
 
-    assert container["image"] == "ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0"
+    assert container["image"] == DEFAULT_IMAGES.get("llm_d.epp", release="v0.8.0")
     assert "--config-file=/etc/epp/plugins.yaml" in args
     assert "--pool-name=tester-wide-ep-1p-ep8-1d-ep8-infpool" in args
     assert "--pool-namespace=default" in args
@@ -160,7 +196,7 @@ def test_lws_uses_cluster_routing_sidecar_image():
     lws = _find(objects, "LeaderWorkerSet", "decode")
     init_container = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["initContainers"][0]
 
-    assert init_container["image"] == "ghcr.io/llm-d/llm-d-routing-sidecar:v0.8.0"
+    assert init_container["image"] == DEFAULT_IMAGES.get("llm_d.routing_sidecar", release="v0.8.0")
 
 
 def test_routing_plugin_config_can_be_inline_override():
@@ -188,3 +224,13 @@ def test_prefill_launch_uses_global_tp_and_local_gpu_span():
     assert "--data-parallel-multi-port-external-lb" in script
     assert "--data-parallel-start-rank $START_RANK" in script
     assert "--data-parallel-rank" not in script
+
+
+def test_deepseek_v4_nested_attention_config_preserves_official_flag_spelling():
+    objects = _objects(DEEPSEEK)
+    for role in ("decode", "prefill"):
+        lws = _find(objects, "LeaderWorkerSet", role)
+        script = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]["args"][0]
+
+        assert "--attention_config.use_fp4_indexer_cache=True" in script
+        assert "attention-config.use-fp4-indexer-cache" not in script

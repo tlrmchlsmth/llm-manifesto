@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .cluster import Cluster
+from .images import apply_image_refs
 from .normalize import apply_cluster_defaults, normalize_lws, normalize_role
 from .overrides import load_spec_data
 
@@ -175,6 +176,7 @@ class DeploymentSpec(BaseModel):
 
 def load_spec(path: str | Path, cluster: Cluster | None = None) -> DeploymentSpec:
     data = load_spec_data(path)
+    data = apply_image_refs(data)
     if cluster is not None:
         data = apply_cluster_defaults(data, gpus_per_node=cluster.gpus_per_node, hf_home=cluster.hf_home)
     return DeploymentSpec.model_validate(data)

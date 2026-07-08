@@ -179,10 +179,6 @@ flush-cache SPEC *ARGS='':
 @cks-nodes:
   kubectl get nodes -o=custom-columns="NAME:metadata.name,IP:status.addresses[?(@.type=='InternalIP')].address,TYPE:metadata.labels['node\.coreweave\.cloud\/type'],LINK:metadata.labels['ethernet\.coreweave\.cloud/speed'],READY:status.conditions[?(@.type=='Ready')].status,CORDON:spec.unschedulable,TAINT:spec.taints[?(@.key=='qos.coreweave.cloud/interruptable')].effect,RELIABILITY:metadata.labels['node\.coreweave\.cloud\/reliability'],LG:metadata.labels['ib\.coreweave\.cloud\/leafgroup'],VERSION:metadata.labels['node\.coreweave\.cloud\/version'],IB:metadata.labels['ib\.coreweave\.cloud\/speed'],STATE:metadata.labels['node\.coreweave\.cloud\/state'],RESERVED:metadata.labels['node\.coreweave\.cloud\/reserved']"
 
-# Check InfiniBand port health on all GPU (arm64) nodes
-check-ib:
-  ./scripts/check-ib.sh
-
 create-secrets:
   kubectl create secret generic hf-secret --from-literal=HF_TOKEN={{HF_TOKEN}} -n {{NAMESPACE}} \
   && kubectl create secret generic gh-token-secret --from-literal=GH_TOKEN={{GH_TOKEN}} -n {{NAMESPACE}}
@@ -202,13 +198,16 @@ VLLM_DEV_SRC := "/mnt/lustre/" + NAME_PREFIX + "/vllm-dev"
 VLLM_DEV_REMOTE := "https://github.com/vllm-project/vllm.git"
 VLLM_DEV_BRANCH := "main"
 VLLM_BUILD_JOBS := "16"
+IMAGE_CATALOG := "config/images.yaml"
 
-# Show persisted logs from Lustre (survives LWS pod recreation)
-# Usage: just logs decode, just logs prefill, just logs decode -f (follow latest)
-logs ROLE='decode' *ARGS='':
+# Show persisted model-server logs (survives LWS pod recreation when backed by shared storage)
+# Usage: just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode
+#        just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode -f
+logs SPEC ROLE='decode' *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  LOG_DIR="/mnt/lustre/{{NAME_PREFIX}}/logs/{{ROLE}}"
+  CLUSTER="$(just --quiet _cluster)"
+  LOG_DIR=$(uv run manifesto log-path {{SPEC}} --cluster "$CLUSTER" --user {{NAME_PREFIX}} --role {{ROLE}})
   if [[ "{{ARGS}}" == *"-f"* ]]; then
     # Follow the latest log file
     LATEST=$({{KN}} exec {{DEV_POD_NAME}} -- bash -c "ls -t $LOG_DIR/*.log 2>/dev/null | head -1")
@@ -225,11 +224,12 @@ logs ROLE='decode' *ARGS='':
     "
   fi
 
-# Clean up old persisted logs from Lustre
-logs-clean ROLE='decode' KEEP='5':
+# Clean up old persisted model-server logs
+logs-clean SPEC ROLE='decode' KEEP='5':
   #!/usr/bin/env bash
   set -euo pipefail
-  LOG_DIR="/mnt/lustre/{{NAME_PREFIX}}/logs/{{ROLE}}"
+  CLUSTER="$(just --quiet _cluster)"
+  LOG_DIR=$(uv run manifesto log-path {{SPEC}} --cluster "$CLUSTER" --user {{NAME_PREFIX}} --role {{ROLE}})
   {{KN}} exec {{DEV_POD_NAME}} -- bash -c "
     cd $LOG_DIR 2>/dev/null || { echo 'No logs directory'; exit 0; }
     FILES=(\$(ls -t *.log 2>/dev/null))
@@ -248,7 +248,7 @@ logs-clean ROLE='decode' KEEP='5':
 
 # Deploy the persistent dev pod (CPU-only, for editing/compiling vLLM on Lustre)
 dev-start:
-  envsubst < {{DEV_DIR}}/dev-pod.yaml | {{KN}} apply -f -
+  VLLM_DEV_IMAGE=$(python3 -c 'import yaml; print(yaml.safe_load(open("{{IMAGE_CATALOG}}"))["dev"]["image"])') envsubst < {{DEV_DIR}}/dev-pod.yaml | {{KN}} apply -f -
   {{KN}} wait --for=condition=Ready pod/{{DEV_POD_NAME}} --timeout=300s
 
 # Exec into the dev pod
@@ -306,7 +306,7 @@ dev-build-log:
 
 # Delete the dev pod
 dev-stop:
-  envsubst < {{DEV_DIR}}/dev-pod.yaml | {{KN}} delete -f - --ignore-not-found=true
+  VLLM_DEV_IMAGE=$(python3 -c 'import yaml; print(yaml.safe_load(open("{{IMAGE_CATALOG}}"))["dev"]["image"])') envsubst < {{DEV_DIR}}/dev-pod.yaml | {{KN}} delete -f - --ignore-not-found=true
 
 NYANN_BENCH_DIR := env("NYANN_BENCH_DIR", "")
 NYANN_LOAD_JOB := NAME_PREFIX + "-sharegpt-load"

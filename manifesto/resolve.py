@@ -17,6 +17,7 @@ from .spec import DeploymentSpec, RoleSpec
 class ResolvedRole:
     ports: RolePorts
     user_root: str
+    log_dir: str
     cache_prefix: str
     dev_source: str
     fabric_profile: str
@@ -62,6 +63,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
     return ResolvedRole(
         ports=ports,
         user_root=cluster.user_root(user=instance.user_slug, release=instance.release_slug),
+        log_dir=f"{cluster.log_root(user=instance.user_slug, release=instance.release_slug)}/{role.name}",
         cache_prefix=cache_prefix,
         dev_source=cluster.dev_source(user=instance.user_slug, release=instance.release_slug),
         fabric_profile=fabric_profile,

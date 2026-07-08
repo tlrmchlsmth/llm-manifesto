@@ -4,7 +4,7 @@ topology: pd
 model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro
-  image: vllm/vllm-openai:v0.23.0
+  image_ref: vllm.standard
 
 routing: {kind: pd, target_role: decode}
 runtime: {sidecars: [dcgm-exporter, node-exporter]}
