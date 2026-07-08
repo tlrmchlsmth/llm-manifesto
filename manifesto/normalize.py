@@ -95,8 +95,11 @@ def _apply_vllm_alias(role: dict[str, Any]) -> None:
         role["vllm_args"] = role.pop("vllm")
 
 
-def apply_cluster_defaults(data: dict[str, Any], *, gpus_per_node: int) -> dict[str, Any]:
+def apply_cluster_defaults(data: dict[str, Any], *, gpus_per_node: int, hf_home: str) -> dict[str, Any]:
     normalized = dict(data)
+    model = dict(normalized.get("model", {}))
+    model.setdefault("hf_home", hf_home)
+    normalized["model"] = model
     roles = []
     for role in normalized.get("roles", []):
         role_data = dict(role)
@@ -104,7 +107,6 @@ def apply_cluster_defaults(data: dict[str, Any], *, gpus_per_node: int) -> dict[
             role_data["gpus_per_pod"] = _infer_gpus_per_pod(role_data, cluster_gpus_per_node=gpus_per_node)
         roles.append(role_data)
     normalized["roles"] = roles
-    normalized.pop("cluster", None)
     return normalized
 
 

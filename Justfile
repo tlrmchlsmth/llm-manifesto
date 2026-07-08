@@ -2,7 +2,7 @@
 set dotenv-load
 set dotenv-required
 
-NAMESPACE := "vllm"
+NAMESPACE := env("MANIFESTO_NAMESPACE", `namespace=$(kubectl config view --minify -o jsonpath='{..namespace}' 2>/dev/null || true); printf '%s' "${namespace:-default}"`)
 HF_TOKEN := "$HF_TOKEN"
 GH_TOKEN := "$GH_TOKEN"
 
@@ -14,7 +14,6 @@ DEV_POD_NAME := NAME_PREFIX + "-vllm-dev"
 
 DEV_DIR := "dev"
 MONITORING_DIR := "monitoring"
-CLUSTER := env("MANIFESTO_CLUSTER", "clusters/oci-gb200.yaml")
 RENDER_OUT := env("MANIFESTO_RENDER_OUT", "/tmp/" + NAME_PREFIX + "-manifesto.yaml")
 EDITOR := env("EDITOR", "vi")
 
@@ -23,13 +22,44 @@ default:
 
 # === v2 spec-based renderer ===
 
+@_cluster:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  CLUSTER="${MANIFESTO_CLUSTER:-}"
+  if [ -z "$CLUSTER" ] && [ -z "${MANIFESTO_CLUSTER_MAP:-}" ]; then
+    echo "MANIFESTO_CLUSTER is required, or set MANIFESTO_CLUSTER_MAP in .env." >&2
+    exit 2
+  fi
+  if [ -z "$CLUSTER" ]; then
+    context=$(kubectl config current-context)
+    cluster=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
+    IFS=',' read -ra entries <<< "${MANIFESTO_CLUSTER_MAP:-}"
+    for entry in "${entries[@]}"; do
+      key="${entry%%=*}"
+      value="${entry#*=}"
+      if [ "$key" = "$context" ] || [ "$key" = "$cluster" ]; then
+        CLUSTER="$value"
+        break
+      fi
+    done
+  fi
+  if [ -z "$CLUSTER" ]; then
+    echo "No cluster mapping found for current kube context or cluster. Set MANIFESTO_CLUSTER, or add it to MANIFESTO_CLUSTER_MAP in .env." >&2
+    exit 2
+  fi
+  echo "$CLUSTER"
+
 render SPEC *ARGS='':
-  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}}
+  #!/usr/bin/env bash
+  set -euo pipefail
+  CLUSTER="$(just --quiet _cluster)"
+  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 render-file SPEC *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} > "{{RENDER_OUT}}"
+  CLUSTER="$(just --quiet _cluster)"
+  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}} > "{{RENDER_OUT}}"
   echo "{{RENDER_OUT}}"
 
 edit-file SPEC *ARGS='':
@@ -54,13 +84,22 @@ delete-file FILE=RENDER_OUT NOW='false':
   {{KN}} delete -f "{{FILE}}" --ignore-not-found=true $FORCE
 
 render-routing SPEC *ARGS='':
-  uv run manifesto render-routing {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}}
+  #!/usr/bin/env bash
+  set -euo pipefail
+  CLUSTER="$(just --quiet _cluster)"
+  uv run manifesto render-routing {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 start SPEC *ARGS='':
-  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
+  #!/usr/bin/env bash
+  set -euo pipefail
+  CLUSTER="$(just --quiet _cluster)"
+  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
 
 deploy-routing SPEC *ARGS='':
-  uv run manifesto render-routing {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
+  #!/usr/bin/env bash
+  set -euo pipefail
+  CLUSTER="$(just --quiet _cluster)"
+  uv run manifesto render-routing {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
 
 stop SPEC NOW='false':
   #!/usr/bin/env bash
@@ -69,7 +108,8 @@ stop SPEC NOW='false':
   if [ "{{NOW}}" = "true" ]; then
     FORCE="--grace-period=0 --force"
   fi
-  uv run manifesto render {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} | {{KN}} delete -f - --ignore-not-found=true $FORCE
+  CLUSTER="$(just --quiet _cluster)"
+  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} | {{KN}} delete -f - --ignore-not-found=true $FORCE
 
 restart SPEC *ARGS='':
   #!/usr/bin/env bash
@@ -103,7 +143,8 @@ ready SPEC:
 flush-cache SPEC *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  CACHE_PATH=$(uv run manifesto cache-path {{SPEC}} --cluster {{CLUSTER}} --user {{NAME_PREFIX}} {{ARGS}})
+  CLUSTER="$(just --quiet _cluster)"
+  CACHE_PATH=$(uv run manifesto cache-path {{SPEC}} --cluster "$CLUSTER" --user {{NAME_PREFIX}} {{ARGS}})
   {{KN}} exec {{DEV_POD_NAME}} -- bash -c "rm -rf '$CACHE_PATH' && echo 'Compile cache flushed: $CACHE_PATH'"
 
 @print-gpus:

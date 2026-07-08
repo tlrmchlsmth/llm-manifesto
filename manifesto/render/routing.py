@@ -90,6 +90,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
     ports = resolve_role(spec, instance, cluster, role).ports
     infpool_name = instance.name("infpool")
     epp_name = instance.name("infpool-epp")
+    epp_role_name = instance.name("infpool-epp-rbac")
     gateway_name = instance.name("inference-gateway")
     gateway_service = instance.name("inference-gateway-istio")
 
@@ -101,18 +102,76 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
     return [
         {
             "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {"name": epp_name, "labels": instance.labels("epp")},
+        },
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "Role",
+            "metadata": {"name": epp_role_name, "labels": instance.labels("epp")},
+            "rules": [
+                {
+                    "apiGroups": [""],
+                    "resources": ["pods"],
+                    "verbs": ["get", "list", "watch"],
+                },
+                {
+                    "apiGroups": ["inference.networking.k8s.io"],
+                    "resources": ["inferencepools"],
+                    "verbs": ["get", "list", "watch"],
+                },
+                {
+                    "apiGroups": ["inference.networking.x-k8s.io"],
+                    "resources": [
+                        "inferencemodelrewrites",
+                        "inferencemodels",
+                        "inferenceobjectives",
+                        "inferencepoolimports",
+                    ],
+                    "verbs": ["get", "list", "watch"],
+                },
+            ],
+        },
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "RoleBinding",
+            "metadata": {"name": epp_role_name, "labels": instance.labels("epp")},
+            "subjects": [
+                {
+                    "kind": "ServiceAccount",
+                    "name": epp_name,
+                    "namespace": spec.namespace,
+                }
+            ],
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": epp_role_name,
+            },
+        },
+        {
+            "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": instance.name("epp-config"), "labels": instance.labels("routing")},
             "data": {"plugins.yaml": _plugin_config(spec.routing)},
         },
         {
-            "apiVersion": "inference.networking.x-k8s.io/v1alpha2",
+            "apiVersion": "inference.networking.k8s.io/v1",
             "kind": "InferencePool",
             "metadata": {"name": infpool_name, "labels": instance.labels("routing")},
             "spec": {
-                "targetPortNumber": ports.public[0],
-                "selector": selector,
-                "extensionRef": {"name": epp_name},
+                "targetPorts": [{"number": port} for port in ports.public],
+                "selector": {"matchLabels": selector},
+                "endpointPickerRef": {"name": epp_name, "kind": "Service", "port": {"number": 9002}},
+            },
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": epp_name, "labels": instance.labels("epp")},
+            "spec": {
+                "selector": instance.labels("epp"),
+                "ports": [{"name": "grpc", "port": 9002, "protocol": "TCP", "targetPort": 9002}],
             },
         },
         {
@@ -125,6 +184,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                 "template": {
                     "metadata": {"labels": instance.labels("epp") | {"inferencepool": epp_name}},
                     "spec": {
+                        "serviceAccountName": epp_name,
                         "affinity": {
                             "nodeAffinity": {
                                 "requiredDuringSchedulingIgnoredDuringExecution": {

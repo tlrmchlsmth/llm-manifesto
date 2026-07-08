@@ -55,6 +55,10 @@ The Justfile requires a `.env` file with:
 - `HF_TOKEN` - HuggingFace token for model access.
 - `GH_TOKEN` - GitHub token.
 - `KUBECONFIG` - Path to kubeconfig.
+- `MANIFESTO_CLUSTER` or `MANIFESTO_CLUSTER_MAP` - Explicit renderer cluster
+  profile, or local kube context/cluster to profile mapping.
+- `MANIFESTO_NAMESPACE` - Optional namespace override; defaults to the current
+  kube context namespace or `default`.
 
 Renderer workflow:
 
@@ -112,7 +116,8 @@ just nyann-stop
 - `pyproject.toml` - Python package metadata and test configuration.
 - `Justfile` - Local automation, deployment, dev, monitoring, and benchmark
   commands.
-- `clusters/oci-gb200.yaml` - Default cluster profile.
+- `clusters/oci-gb200.yaml` - GB200 cluster profile.
+- `clusters/cks-h200.yaml` - CoreWeave H200 cluster profile.
 - `models/qwen/aggregated.yaml` - Aggregated Qwen example.
 - `models/deepseek-v4-gb200/pd.yaml` - P/D DeepSeek example.
 - `models/deepseek-v4-gb200/aggregated.yaml` - Aggregated DeepSeek example.

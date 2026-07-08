@@ -8,11 +8,12 @@ from ..cluster import Cluster
 from ..instance import Instance
 from ..launch import build_launch_script
 from ..resolve import resolve_role
-from ..spec import DeploymentSpec, RoleSpec
+from ..spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 
 def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
     resolved = resolve_role(spec, instance, cluster, role)
+    external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
 
     containers, extra_volumes = sidecars(spec.runtime.sidecars, dcgm_config_name=instance.name("dcgm-metrics"))
     volumes = cluster.base_volumes()
@@ -24,6 +25,8 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
         {"containerPort": port, "name": f"vllm-{idx}", "protocol": "TCP"}
         for idx, port in enumerate(resolved.ports.backend)
     ]
+    if external_dp:
+        container_ports.insert(0, {"containerPort": 8100, "name": "dp-supervisor", "protocol": "TCP"})
     readiness_ports = resolved.ports.public if role.routing_sidecar else resolved.ports.backend
 
     init_containers = []
@@ -107,6 +110,16 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
         "volumeMounts": cluster.volume_mounts(),
         "workingDir": "/code",
     }
+    if external_dp:
+        vllm_container["startupProbe"] = {
+            "httpGet": {"path": "/health", "port": "dp-supervisor"},
+            "periodSeconds": 1,
+            "timeoutSeconds": 5,
+            "failureThreshold": 1800,
+        }
+    if cluster.rdma_resource_name:
+        for resources in ("requests", "limits"):
+            vllm_container["resources"][resources][cluster.rdma_resource_name] = cluster.rdma_resource_value
     if resolved.resource_claims:
         vllm_container["resources"]["claims"] = [{"name": claim["name"]} for claim in resolved.resource_claims]
 

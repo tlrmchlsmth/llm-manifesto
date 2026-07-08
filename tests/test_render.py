@@ -11,6 +11,7 @@ from manifesto.spec import load_spec
 
 ROOT = Path(__file__).resolve().parents[1]
 CLUSTER = load_cluster(ROOT / "clusters" / "oci-gb200.yaml")
+CKS_H200 = load_cluster(ROOT / "clusters" / "cks-h200.yaml")
 
 
 def _objects(config: str) -> list[dict]:
@@ -40,14 +41,21 @@ def test_dp_ports_feed_container_readiness_and_inferencepool():
     container = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]
     infpool = _find(objects, "InferencePool")
 
-    assert [p["containerPort"] for p in container["ports"]] == [8200, 8201, 8202, 8203]
+    assert [p["containerPort"] for p in container["ports"]] == [8100, 8200, 8201, 8202, 8203]
     readiness = container["readinessProbe"]["exec"]["command"][-1]
     assert "localhost:8000" in readiness
     assert "localhost:8003" in readiness
-    assert infpool["spec"]["targetPortNumber"] == 8000
+    assert container["startupProbe"]["httpGet"]["port"] == "dp-supervisor"
+    assert infpool["apiVersion"] == "inference.networking.k8s.io/v1"
+    assert infpool["spec"]["targetPorts"] == [{"number": 8000}, {"number": 8001}, {"number": 8002}, {"number": 8003}]
+    assert infpool["spec"]["endpointPickerRef"]["name"] == "tester-wide-ep-infpool-epp"
     script = container["args"][0]
     assert "DP_SIZE=16" in script
     assert "DP_SIZE=$((LWS_GROUP_SIZE * DP_SIZE_LOCAL))" not in script
+    assert "--data-parallel-multi-port-external-lb" in script
+    assert "--data-parallel-supervisor-port 8100" in script
+    assert "--data-parallel-start-rank $START_RANK" in script
+    assert "--data-parallel-rank" not in script
 
 
 def test_no_dp_qwen_uses_single_port_and_no_dp_flags():
@@ -59,15 +67,25 @@ def test_no_dp_qwen_uses_single_port_and_no_dp_flags():
 
     assert [p["containerPort"] for p in container["ports"]] == [8000]
     assert "--data-parallel-size" not in script
-    assert infpool["spec"]["targetPortNumber"] == 8000
+    assert "startupProbe" not in container
+    assert infpool["spec"]["targetPorts"] == [{"number": 8000}]
 
 
 def test_inferencepool_selector_is_instance_scoped():
     objects = _objects("deepseek-v4-gb200/pd.yaml")
     infpool = _find(objects, "InferencePool")
 
-    assert infpool["spec"]["selector"]["app.kubernetes.io/instance"] == "tester-wide-ep"
-    assert infpool["spec"]["selector"]["llm-d.ai/role"] == "decode"
+    selector = infpool["spec"]["selector"]["matchLabels"]
+    assert selector["app.kubernetes.io/instance"] == "tester-wide-ep"
+    assert selector["llm-d.ai/role"] == "decode"
+
+
+def test_inferencepool_references_epp_service():
+    objects = _objects("deepseek-v4-gb200/pd.yaml")
+    service = _find(objects, "Service", "infpool-epp")
+
+    assert service["spec"]["selector"]["app.kubernetes.io/component"] == "epp"
+    assert service["spec"]["ports"][0]["targetPort"] == 9002
 
 
 def test_epp_uses_current_config_file_flag():
@@ -79,8 +97,61 @@ def test_epp_uses_current_config_file_flag():
     assert container["image"] == "ghcr.io/llm-d/llm-d-inference-scheduler:v0.8.0"
     assert "--config-file=/etc/epp/plugins.yaml" in args
     assert "--pool-name=tester-wide-ep-infpool" in args
-    assert "--pool-namespace=vllm" in args
+    assert "--pool-namespace=default" in args
     assert not any(arg.startswith("--plugins-config-file") for arg in args)
+
+
+def test_epp_uses_dedicated_service_account_and_rbac():
+    objects = _objects("deepseek-v4-gb200/pd.yaml")
+    service_account = _find(objects, "ServiceAccount", "infpool-epp")
+    role = _find(objects, "Role", "infpool-epp-rbac")
+    binding = _find(objects, "RoleBinding", "infpool-epp-rbac")
+    deployment = _find(objects, "Deployment", "infpool-epp")
+
+    assert deployment["spec"]["template"]["spec"]["serviceAccountName"] == service_account["metadata"]["name"]
+    assert binding["subjects"] == [
+        {"kind": "ServiceAccount", "name": service_account["metadata"]["name"], "namespace": "default"}
+    ]
+    assert binding["roleRef"]["name"] == role["metadata"]["name"]
+
+    rules = {(tuple(rule["apiGroups"]), tuple(rule["resources"])): rule["verbs"] for rule in role["rules"]}
+    assert rules[(("",), ("pods",))] == ["get", "list", "watch"]
+    assert rules[(("inference.networking.k8s.io",), ("inferencepools",))] == ["get", "list", "watch"]
+    assert rules[
+        (
+            ("inference.networking.x-k8s.io",),
+            ("inferencemodelrewrites", "inferencemodels", "inferenceobjectives", "inferencepoolimports"),
+        )
+    ] == ["get", "list", "watch"]
+
+
+def test_cks_h200_cluster_uses_coreweave_cache_and_rdma_settings():
+    spec = load_spec(ROOT / "models" / "qwen" / "h200-aggregated.yaml", CKS_H200)
+    assert spec.model.hf_home == "/var/cache/huggingface"
+    objects = render(spec, user="tester", cluster=CKS_H200)
+    lws = _find(objects, "LeaderWorkerSet", "decode")
+    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+    container = pod_spec["containers"][0]
+    script = container["args"][0]
+    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+
+    volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
+    mounts = {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]}
+
+    assert volumes["hf-cache"]["hostPath"]["path"] == "/mnt/local/hf-cache"
+    assert volumes["jit-cache"]["hostPath"]["path"] == "/mnt/local/jit-cache"
+    assert mounts["hf-cache"] == "/var/cache/huggingface"
+    assert mounts["jit-cache"] == "/var/cache/vllm"
+    assert env["NCCL_IB_HCA"] == "ibp"
+    assert env["NVSHMEM_HCA_PREFIX"] == "ibp"
+    assert env["HF_HUB_CACHE"] == "/var/cache/huggingface"
+    assert env["FLASHINFER_WORKSPACE_BASE"] == "/var/cache/vllm/flashinfer"
+    assert "MAX_TOKENS" not in env
+    assert "--max-num-batched-tokens" not in script
+    assert "--max-num-seqs" not in script
+    assert "--max-cudagraph-capture-size" not in script
+    assert container["resources"]["requests"]["rdma/ib"] == "1"
+    assert container["resources"]["limits"]["rdma/ib"] == "1"
 
 
 def test_lws_uses_cluster_routing_sidecar_image():

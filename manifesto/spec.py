@@ -100,7 +100,7 @@ class ModelSpec(BaseModel):
     label: str | None = None
     image: str
     served_name: str | None = None
-    hf_home: str = "/mnt/local/hf_cache"
+    hf_home: str | None = None
 
     @property
     def label_value(self) -> str:
@@ -135,7 +135,7 @@ class DeploymentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     release: str
-    namespace: str = "vllm"
+    namespace: str = "default"
     topology: TopologyKind
     model: ModelSpec
     roles: list[RoleSpec]
@@ -177,5 +177,5 @@ def load_spec(path: str | Path, cluster: Cluster | None = None) -> DeploymentSpe
     with Path(path).open("r", encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     if cluster is not None:
-        data = apply_cluster_defaults(data, gpus_per_node=cluster.gpus_per_node)
+        data = apply_cluster_defaults(data, gpus_per_node=cluster.gpus_per_node, hf_home=cluster.hf_home)
     return DeploymentSpec.model_validate(data)

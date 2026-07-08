@@ -44,21 +44,51 @@ class Cluster:
     fabric_default_env: dict[str, str] | None = None
     fabric_profiles: dict[str, dict[str, Any]] | None = None
     imex_resource_claim_template: str | None = None
+    hf_cache_host_path: str | None = None
+    jit_cache_host_path: str | None = None
+    hf_home: str = "/mnt/local/hf_cache"
+    rdma_resource_name: str | None = None
+    rdma_resource_value: str = "1"
     user_root_template: str = "/mnt/lustre/{user}"
     cache_root_template: str = "/mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}"
     dev_venv_template: str = "/mnt/lustre/{user}/vllm-venv"
     dev_source_template: str = "/mnt/lustre/{user}/vllm-dev"
 
     def base_volumes(self) -> list[dict]:
-        return [
+        volumes = [
             {"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": self.shm_size}},
-            {"name": "lustre", "persistentVolumeClaim": {"claimName": self.lustre_pvc}},
-            {"name": "local-nvme", "hostPath": {"path": self.local_nvme_path, "type": "Directory"}},
             {"name": "sys", "hostPath": {"path": "/sys", "type": "Directory"}},
             {"name": "proc", "hostPath": {"path": "/proc", "type": "Directory"}},
         ]
+        if self.hf_cache_host_path and self.jit_cache_host_path:
+            volumes.extend(
+                [
+                    {
+                        "name": "hf-cache",
+                        "hostPath": {"path": self.hf_cache_host_path, "type": "DirectoryOrCreate"},
+                    },
+                    {
+                        "name": "jit-cache",
+                        "hostPath": {"path": self.jit_cache_host_path, "type": "DirectoryOrCreate"},
+                    },
+                ]
+            )
+        else:
+            volumes.extend(
+                [
+                    {"name": "lustre", "persistentVolumeClaim": {"claimName": self.lustre_pvc}},
+                    {"name": "local-nvme", "hostPath": {"path": self.local_nvme_path, "type": "Directory"}},
+                ]
+            )
+        return volumes
 
     def volume_mounts(self) -> list[dict]:
+        if self.hf_cache_host_path and self.jit_cache_host_path:
+            return [
+                {"name": "dshm", "mountPath": "/dev/shm"},
+                {"name": "hf-cache", "mountPath": "/var/cache/huggingface"},
+                {"name": "jit-cache", "mountPath": "/var/cache/vllm"},
+            ]
         return [
             {"name": "dshm", "mountPath": "/dev/shm"},
             {"name": "lustre", "mountPath": "/mnt/lustre"},
@@ -105,6 +135,11 @@ class Cluster:
             fabric_default_env=dict(self.fabric_default_env or {}),
             fabric_profiles=dict(self.fabric_profiles or {}),
             imex_resource_claim_template=self.imex_resource_claim_template,
+            hf_cache_host_path=self.hf_cache_host_path,
+            jit_cache_host_path=self.jit_cache_host_path,
+            hf_home=self.hf_home,
+            rdma_resource_name=self.rdma_resource_name,
+            rdma_resource_value=self.rdma_resource_value,
             user_root_template=user_root or self.user_root_template,
             cache_root_template=cache_root or self.cache_root_template,
             dev_venv_template=dev_venv or self.dev_venv_template,
@@ -138,6 +173,8 @@ def load_cluster(path: str | Path) -> Cluster:
     paths = data.get("paths", {})
     dev = data.get("dev", {})
     fabric = data.get("fabric", {})
+    cache = data.get("cache", {})
+    rdma = data.get("rdma", {})
     return Cluster(
         name=data["name"],
         gpus_per_node=int(data.get("gpus_per_node", 4)),
@@ -151,6 +188,11 @@ def load_cluster(path: str | Path) -> Cluster:
         fabric_default_env=fabric.get("default_env", {}),
         fabric_profiles=fabric.get("profiles", {}),
         imex_resource_claim_template=fabric.get("imex_resource_claim_template"),
+        hf_cache_host_path=cache.get("hf_host_path"),
+        jit_cache_host_path=cache.get("jit_host_path"),
+        hf_home=cache.get("hf_home", "/mnt/local/hf_cache"),
+        rdma_resource_name=rdma.get("resource_name"),
+        rdma_resource_value=str(rdma.get("value", "1")),
         user_root_template=paths.get("user_root", "/mnt/lustre/{user}"),
         cache_root_template=paths.get(
             "cache_root",

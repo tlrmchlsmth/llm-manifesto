@@ -1,0 +1,58 @@
+# CoreWeave Kubernetes Service H200 profile for wide-EP vLLM model servers.
+name: cks-h200
+gpus_per_node: 8
+
+llm_d:
+  release: v0.8.0
+  images:
+    epp: ghcr.io/llm-d/llm-d-inference-scheduler:{release}
+    routing_sidecar: ghcr.io/llm-d/llm-d-routing-sidecar:{release}
+
+storage:
+  # Not mounted when cache host paths are configured, but kept for renderer compatibility.
+  lustre_pvc: unused
+  local_nvme_path: /mnt/local
+
+cache:
+  hf_host_path: /mnt/local/hf-cache
+  jit_host_path: /mnt/local/jit-cache
+  hf_home: /var/cache/huggingface
+
+rdma:
+  resource_name: rdma/ib
+  value: "1"
+
+pod_defaults:
+  shm_size: 2Gi
+
+paths:
+  user_root: /var/cache/vllm/{user}
+  cache_root: /var/cache/vllm
+
+dev:
+  venv: /var/cache/vllm/{user}/vllm-venv
+  source: /var/cache/vllm/{user}/vllm-dev
+
+fabric:
+  ucx_net_devices: ""
+  default_profile: standard
+  default_env:
+    CUDA_CACHE_PATH: /var/cache/vllm/cuda
+    CCACHE_DIR: /var/cache/vllm/ccache
+    HF_HUB_CACHE: /var/cache/huggingface
+    FLASHINFER_WORKSPACE_BASE: /var/cache/vllm/flashinfer
+    TRITON_LIBCUDA_PATH: /usr/lib64
+    VLLM_ENGINE_READY_TIMEOUT_S: "1800"
+    VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "1"
+    VLLM_SKIP_P2P_CHECK: "1"
+    VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
+    NVIDIA_GDRCOPY: enabled
+    NVSHMEM_REMOTE_TRANSPORT: ibgda
+    NVSHMEM_IB_ENABLE_IBGDA: "true"
+    NVSHMEM_BOOTSTRAP_UID_SOCK_IFNAME: eth0
+    GLOO_SOCKET_IFNAME: eth0
+    NCCL_SOCKET_IFNAME: eth0
+    NCCL_IB_HCA: ibp
+    NVSHMEM_HCA_PREFIX: ibp
+  profiles:
+    standard: {}

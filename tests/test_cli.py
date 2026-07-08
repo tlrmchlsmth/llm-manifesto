@@ -67,6 +67,24 @@ def test_render_cli_prefixes_manifest_with_generation_command(capsys):
     assert "\n---\napiVersion: v1\nkind: ServiceAccount\n" in out
 
 
+def test_render_cli_namespace_override(capsys):
+    rc = main(
+        [
+            "render-routing",
+            str(MODEL),
+            "--cluster",
+            str(CLUSTER),
+            "--namespace",
+            "workload-ns",
+            "--user",
+            "tester",
+        ]
+    )
+
+    assert rc == 0
+    assert "--pool-namespace=workload-ns" in capsys.readouterr().out
+
+
 def test_render_cli_pre_launch_hook(capsys):
     rc = main(
         [

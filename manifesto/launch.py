@@ -8,7 +8,7 @@ from typing import Any
 
 from .dp_ports import RolePorts
 from .parallelism import parallel_layout
-from .spec import DeploymentSpec, RoleSpec
+from .spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 
 def _flag_name(name: str) -> str:
@@ -34,6 +34,7 @@ def build_launch_script(
     vllm_args: dict[str, Any] | None = None,
 ) -> str:
     layout = parallel_layout(role)
+    external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
     lines = [
         "set -euo pipefail",
         f"LOG_DIR={shlex.quote(user_root + '/logs/' + role.name)}",
@@ -78,30 +79,36 @@ def build_launch_script(
     else:
         lines += ["DP_SIZE_LOCAL=1", "START_RANK=0"]
 
-    lines += [
-        "",
-        "for R in $(seq 0 $((DP_SIZE_LOCAL - 1))); do",
-        f"  GPU_START=$((R * {layout.tp_local_size}))",
-        f"  GPUS=$(seq -s, $GPU_START $((GPU_START + {layout.tp_local_size} - 1)))",
-        "  RANK=$((START_RANK + R))",
-        f"  PORTS=({' '.join(str(port) for port in ports.backend)})",
-        "  PORT=${PORTS[$R]}",
-    ]
-
     base_args = [
         "vllm",
         "serve",
         shlex.quote(spec.model.id),
-        "--device-ids",
-        "$GPUS",
         "--port",
-        "$PORT",
+        str(ports.backend[0]) if external_dp else "$PORT",
         "--tensor-parallel-size",
         str(layout.tp_world_size),
     ]
+    if not external_dp:
+        base_args[3:3] = ["--device-ids", "$GPUS"]
     if role.expert_parallel.enabled:
         base_args.append("--enable-expert-parallel")
-    if role.data_parallel.enabled:
+    if external_dp:
+        base_args += [
+            "--data-parallel-size",
+            "$DP_SIZE",
+            "--data-parallel-start-rank",
+            "$START_RANK",
+            "--data-parallel-size-local",
+            "$DP_SIZE_LOCAL",
+            "--data-parallel-address",
+            "${LWS_LEADER_ADDRESS}",
+            "--data-parallel-rpc-port",
+            "5555",
+            "--data-parallel-multi-port-external-lb",
+            "--data-parallel-supervisor-port",
+            "8100",
+        ]
+    elif role.data_parallel.enabled:
         base_args += [
             "--data-parallel-size",
             "$DP_SIZE",
@@ -122,6 +129,25 @@ def build_launch_script(
         base_args.extend(_format_arg(name, value))
 
     cmd = " ".join(base_args)
+    if external_dp:
+        lines += [
+            "",
+            f"FLASH_ATTENTION_CUTE_DSL_CACHE_DIR=${{FLASH_ATTENTION_CUTE_DSL_CACHE_DIR}}/{role.name} \\",
+            f"TILELANG_CACHE_DIR=${{TILELANG_CACHE_DIR}}/{role.name} \\",
+            f"exec {cmd}",
+        ]
+        return "\n".join(lines)
+
+    lines += [
+        "",
+        "for R in $(seq 0 $((DP_SIZE_LOCAL - 1))); do",
+        f"  GPU_START=$((R * {layout.tp_local_size}))",
+        f"  GPUS=$(seq -s, $GPU_START $((GPU_START + {layout.tp_local_size} - 1)))",
+        "  RANK=$((START_RANK + R))",
+        f"  PORTS=({' '.join(str(port) for port in ports.backend)})",
+        "  PORT=${PORTS[$R]}",
+    ]
+
     lines += [
         "  VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT}/rank${RANK} \\",
         "  FLASHINFER_CACHE_DIR=${FLASHINFER_CACHE_DIR}/rank${RANK} \\",

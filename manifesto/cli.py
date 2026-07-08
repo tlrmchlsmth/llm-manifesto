@@ -39,6 +39,8 @@ def _load_cluster(args: argparse.Namespace):
 
 
 def _apply_runtime_overrides(spec, args: argparse.Namespace) -> None:
+    if getattr(args, "namespace", None):
+        spec.namespace = args.namespace
     if getattr(args, "dev", False):
         spec.runtime.dev = True
     if getattr(args, "dev_venv", None):
@@ -58,9 +60,13 @@ def _manifest_header(args: argparse.Namespace, *, user: str, routing_only: bool)
         args.spec,
         "--cluster",
         args.cluster,
+    ]
+    if getattr(args, "namespace", None):
+        command.extend(["--namespace", args.namespace])
+    command.extend([
         "--user",
         user,
-    ]
+    ])
     if getattr(args, "dev", False):
         command.append("--dev")
     for name in ("user_root", "cache_root", "dev_venv", "dev_source"):
@@ -79,6 +85,7 @@ def _manifest_header(args: argparse.Namespace, *, user: str, routing_only: bool)
 def _add_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("spec")
     parser.add_argument("--cluster", required=True)
+    parser.add_argument("--namespace")
     parser.add_argument("--user")
     parser.add_argument("--dev", action="store_true")
     parser.add_argument("--user-root")
