@@ -2,9 +2,6 @@
 name: oci-gb200
 gpus_per_node: 4
 
-llm_d:
-  release: v0.8.0
-
 storage:
   lustre_pvc: lustre-pvc-vllm
   local_nvme_path: /mnt/numa0

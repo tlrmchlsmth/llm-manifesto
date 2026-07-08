@@ -164,7 +164,7 @@ def test_epp_uses_current_config_file_flag():
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     args = container["args"]
 
-    assert container["image"] == DEFAULT_IMAGES.get("llm_d.epp", release="v0.8.0")
+    assert container["image"] == DEFAULT_IMAGES.get("llm_d.epp", release=DEFAULT_IMAGES.get("llm_d.release"))
     assert "--config-file=/etc/epp/plugins.yaml" in args
     assert "--pool-name=tester-wide-ep-1p-ep8-1d-ep8-infpool" in args
     assert "--pool-namespace=default" in args
@@ -229,7 +229,10 @@ def test_lws_uses_cluster_routing_sidecar_image():
     lws = _find(objects, "LeaderWorkerSet", "decode")
     init_container = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["initContainers"][0]
 
-    assert init_container["image"] == DEFAULT_IMAGES.get("llm_d.routing_sidecar", release="v0.8.0")
+    assert init_container["image"] == DEFAULT_IMAGES.get(
+        "llm_d.routing_sidecar",
+        release=DEFAULT_IMAGES.get("llm_d.release"),
+    )
 
 
 def test_routing_plugin_config_can_be_inline_override():
