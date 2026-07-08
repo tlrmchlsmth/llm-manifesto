@@ -1,0 +1,82 @@
+# Base equivalent to llm-d guides/wide-ep-lws/modelserver/gpu/vllm-deepseek-v4/base.
+topology: pd
+
+model:
+  id: deepseek-ai/DeepSeek-V4-Pro
+  label: DeepSeek-V4-Pro
+  image: vllm/vllm-openai:v0.23.0
+
+routing: {kind: pd, target_role: decode}
+runtime: {sidecars: [dcgm-exporter, node-exporter]}
+
+vars:
+  max_concurrency: 512
+  mtp_size: 1
+
+roles:
+  - name: decode
+    lws: {size: 2, replicas: 1}
+    parallelism: {tp: 1, dp: 8, ep: true}
+    kv_transfer_config:
+      kv_connector: NixlConnector
+      kv_role: kv_consumer
+      kv_load_failure_policy: fail
+    computed:
+      env: {MAX_TOKENS: max_concurrency}
+      vllm:
+        max_num_batched_tokens: max_concurrency * mtp_size
+        max_num_seqs: max_concurrency
+        max_cudagraph_capture_size: max_concurrency
+    env:
+      VLLM_SKIP_P2P_CHECK: "1"
+      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
+      VLLM_USE_DEEP_GEMM: "1"
+    resources:
+      ephemeral_storage: 1Ti
+    vllm:
+      tokenizer_mode: deepseek_v4
+      gpu_memory_utilization: "0.85"
+      trust_remote_code: true
+      api_server_count: 4
+      disable_access_log_for_endpoints: /health,/metrics
+      data_parallel_hybrid_lb: true
+      enable_ep_weight_filter: true
+      moe_backend: deep_gemm_mega_moe
+      block_size: 256
+      no_disable_hybrid_kv_cache_manager: true
+      enable_cumem_allocator: true
+      stream_interval: 50
+      kv_cache_dtype: fp8
+      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
+
+  - name: prefill
+    lws: {size: 2, replicas: 2}
+    parallelism: {tp: 1, dp: 8, ep: true}
+    kv_transfer_config:
+      kv_connector: NixlConnector
+      kv_role: kv_producer
+      kv_load_failure_policy: fail
+    env:
+      VLLM_SKIP_P2P_CHECK: "1"
+      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
+      VLLM_USE_DEEP_GEMM: "1"
+      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "1024"
+      VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE: "2048"
+      VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
+    resources:
+      ephemeral_storage: 1Ti
+    vllm:
+      tokenizer_mode: deepseek_v4
+      trust_remote_code: true
+      api_server_count: 4
+      disable_access_log_for_endpoints: /health,/metrics
+      data_parallel_hybrid_lb: true
+      enable_ep_weight_filter: true
+      moe_backend: deep_gemm_mega_moe
+      enforce_eager: true
+      block_size: 256
+      no_async_scheduling: true
+      no_disable_hybrid_kv_cache_manager: true
+      enable_cumem_allocator: true
+      numa_bind: true
+      kv_cache_dtype: fp8

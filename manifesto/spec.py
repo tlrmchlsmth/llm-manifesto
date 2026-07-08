@@ -6,11 +6,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .cluster import Cluster
 from .normalize import apply_cluster_defaults, normalize_lws, normalize_role
+from .overrides import load_spec_data
 
 
 class TopologyKind(StrEnum):
@@ -174,8 +174,7 @@ class DeploymentSpec(BaseModel):
 
 
 def load_spec(path: str | Path, cluster: Cluster | None = None) -> DeploymentSpec:
-    with Path(path).open("r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
+    data = load_spec_data(path)
     if cluster is not None:
         data = apply_cluster_defaults(data, gpus_per_node=cluster.gpus_per_node, hf_home=cluster.hf_home)
     return DeploymentSpec.model_validate(data)
