@@ -38,6 +38,14 @@ def test_rendered_yaml_parses():
     assert len(parsed) == len(objects)
 
 
+def test_rendered_launch_script_uses_literal_yaml_block():
+    rendered = render_to_yaml(_objects(DEEPSEEK))
+
+    assert "args:\n          - |-" in rendered
+    assert "exec \\\n              vllm \\\n              serve \\" in rendered
+    assert "\\nexec vllm serve" not in rendered
+
+
 def test_dp_ports_feed_container_readiness_and_inferencepool():
     objects = _objects(DEEPSEEK)
     lws = _find(objects, "LeaderWorkerSet", "decode")
@@ -59,6 +67,10 @@ def test_dp_ports_feed_container_readiness_and_inferencepool():
     assert "--data-parallel-supervisor-port 8100" in script
     assert "--data-parallel-start-rank $START_RANK" in script
     assert "--data-parallel-rank" not in script
+    assert "exec \\\n  vllm \\\n  serve \\\n  deepseek-ai/DeepSeek-V4-Pro \\" in script
+    assert "  --port 8200 \\" in script
+    assert "  --max-num-seqs 1024 \\" in script
+    assert "  --enable-eplb False" not in script
 
 
 def test_deepseek_lws_uses_short_workload_names_with_full_instance_labels():

@@ -14,6 +14,27 @@ from ..instance import Instance
 from ..spec import DeploymentSpec
 
 
+class LiteralString(str):
+    pass
+
+
+def _literal_string_representer(dumper: yaml.SafeDumper, data: LiteralString) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+
+
+yaml.SafeDumper.add_representer(LiteralString, _literal_string_representer)
+
+
+def _literal_multiline_strings(value):
+    if isinstance(value, str) and "\n" in value:
+        return LiteralString(value)
+    if isinstance(value, list):
+        return [_literal_multiline_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _literal_multiline_strings(item) for key, item in value.items()}
+    return value
+
+
 def render(spec: DeploymentSpec, *, user: str, cluster: Cluster, routing_only: bool = False) -> list[dict]:
     instance = Instance(user=user, release=spec.release)
     if routing_only:
@@ -32,5 +53,5 @@ def render_to_yaml(objects: list[dict], *, header: list[str] | None = None) -> s
     stream = io.StringIO()
     for line in header or []:
         stream.write(f"# {line}\n")
-    yaml.safe_dump_all(objects, stream, sort_keys=False, explicit_start=True)
+    yaml.safe_dump_all(_literal_multiline_strings(objects), stream, sort_keys=False, explicit_start=True)
     return stream.getvalue()

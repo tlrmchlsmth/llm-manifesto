@@ -36,6 +36,16 @@ def _format_arg(name: str, value: Any) -> list[str]:
     return [flag, shlex.quote(str(value))]
 
 
+def _command_lines(parts: list[str | list[str]], *, indent: str = "") -> list[str]:
+    if not parts:
+        return []
+    rendered = [" ".join(part) if isinstance(part, list) else part for part in parts]
+    lines = [f"{indent}{rendered[0]} \\"]
+    lines.extend(f"{indent}  {part} \\" for part in rendered[1:-1])
+    lines.append(f"{indent}  {rendered[-1]}")
+    return lines
+
+
 def build_launch_script(
     spec: DeploymentSpec,
     role: RoleSpec,
@@ -91,62 +101,49 @@ def build_launch_script(
     else:
         lines += ["DP_SIZE_LOCAL=1", "START_RANK=0"]
 
-    base_args = [
+    base_args: list[str | list[str]] = [
         "vllm",
         "serve",
         shlex.quote(spec.model.id),
-        "--port",
-        str(ports.backend[0]) if external_dp else "$PORT",
-        "--tensor-parallel-size",
-        str(layout.tp_world_size),
+        ["--port", str(ports.backend[0]) if external_dp else "$PORT"],
+        ["--tensor-parallel-size", str(layout.tp_world_size)],
     ]
     if not external_dp:
-        base_args[3:3] = ["--device-ids", "$GPUS"]
+        base_args[3:3] = [["--device-ids", "$GPUS"]]
     if role.expert_parallel.enabled:
         base_args.append("--enable-expert-parallel")
     if external_dp:
         base_args += [
-            "--data-parallel-size",
-            "$DP_SIZE",
-            "--data-parallel-start-rank",
-            "$START_RANK",
-            "--data-parallel-size-local",
-            "$DP_SIZE_LOCAL",
-            "--data-parallel-address",
-            "${LWS_LEADER_ADDRESS}",
-            "--data-parallel-rpc-port",
-            "5555",
+            ["--data-parallel-size", "$DP_SIZE"],
+            ["--data-parallel-start-rank", "$START_RANK"],
+            ["--data-parallel-size-local", "$DP_SIZE_LOCAL"],
+            ["--data-parallel-address", "${LWS_LEADER_ADDRESS}"],
+            ["--data-parallel-rpc-port", "5555"],
             "--data-parallel-multi-port-external-lb",
-            "--data-parallel-supervisor-port",
-            "8100",
+            ["--data-parallel-supervisor-port", "8100"],
         ]
     elif role.data_parallel.enabled:
         base_args += [
-            "--data-parallel-size",
-            "$DP_SIZE",
-            "--data-parallel-rank",
-            "$RANK",
-            "--data-parallel-size-local",
-            "1",
-            "--data-parallel-address",
-            "${LWS_LEADER_ADDRESS}",
-            "--data-parallel-rpc-port",
-            "5555",
+            ["--data-parallel-size", "$DP_SIZE"],
+            ["--data-parallel-rank", "$RANK"],
+            ["--data-parallel-size-local", "1"],
+            ["--data-parallel-address", "${LWS_LEADER_ADDRESS}"],
+            ["--data-parallel-rpc-port", "5555"],
         ]
     if role.kv_transfer_config:
-        base_args += ["--kv_transfer_config", shlex.quote(json.dumps(role.kv_transfer_config, separators=(",", ":")))]
+        base_args.append(["--kv_transfer_config", shlex.quote(json.dumps(role.kv_transfer_config, separators=(",", ":")))])
     if spec.model.served_name:
-        base_args += ["--served-model-name", shlex.quote(spec.model.served_name)]
+        base_args.append(["--served-model-name", shlex.quote(spec.model.served_name)])
     for name, value in (vllm_args or role.vllm_args).items():
-        base_args.extend(_format_arg(name, value))
+        if arg := _format_arg(name, value):
+            base_args.append(arg)
 
-    cmd = " ".join(base_args)
     if external_dp:
         lines += [
             "",
             f"FLASH_ATTENTION_CUTE_DSL_CACHE_DIR=${{FLASH_ATTENTION_CUTE_DSL_CACHE_DIR}}/{role.name} \\",
             f"TILELANG_CACHE_DIR=${{TILELANG_CACHE_DIR}}/{role.name} \\",
-            f"exec {cmd}",
+            *_command_lines(["exec", *base_args]),
         ]
         return "\n".join(lines)
 
@@ -165,7 +162,7 @@ def build_launch_script(
         "  FLASHINFER_CACHE_DIR=${FLASHINFER_CACHE_DIR}/rank${RANK} \\",
         f"  FLASH_ATTENTION_CUTE_DSL_CACHE_DIR=${{FLASH_ATTENTION_CUTE_DSL_CACHE_DIR}}/{role.name}_rank${{RANK}} \\",
         f"  TILELANG_CACHE_DIR=${{TILELANG_CACHE_DIR}}/{role.name}_rank${{RANK}} \\",
-        f"  {cmd} &",
+        *_command_lines([*base_args, "&"], indent="  "),
         "done",
         "",
         "wait -n",
