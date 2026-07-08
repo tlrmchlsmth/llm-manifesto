@@ -98,7 +98,7 @@ Examples:
 ```text
 models/qwen/aggregated.yaml
 models/deepseek-v4/1P-EP8-1D-EP8.yaml
-models/deepseek-v4/3P-EP8-2D-EP16.yaml
+models/deepseek-v4/3P-EP8-1D-EP16.yaml
 ```
 
 A spec chooses the topology, roles, parallelism, vLLM args, and routing behavior.
@@ -149,8 +149,8 @@ role before normal schema validation.
 
 DeepSeek V4 wide-EP specs use filenames that encode only the parallel layout:
 `<prefill-replicas>P-EP<width>-<decode-replicas>D-EP<width>.yaml`. For example,
-`3P-EP8-2D-EP16.yaml` means three prefill LWS replicas at EP8 and two decode
-LWS replicas at EP16. Backend choices stay inside the YAML because optimal
+`3P-EP8-1D-EP16.yaml` means three prefill LWS replicas at EP8 and one decode
+LWS replica at EP16. Backend choices stay inside the YAML because optimal
 backends can change independently of the parallel layout.
 
 ## Cluster Profiles

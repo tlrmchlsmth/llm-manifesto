@@ -1,4 +1,4 @@
-# Base equivalent to llm-d guides/wide-ep-lws/modelserver/gpu/vllm-deepseek-v4/base.
+# Tuned DeepSeek V4 wide-EP base from the GB200 j-llm-d configs.
 topology: pd
 
 model:
@@ -10,16 +10,17 @@ routing: {kind: pd, target_role: decode}
 runtime: {sidecars: [dcgm-exporter, node-exporter]}
 
 vars:
-  max_concurrency: 512
+  max_concurrency: 1024
   mtp_size: 1
 
 roles:
   - name: decode
-    lws: {size: 2, replicas: 1}
-    parallelism: {tp: 1, dp: 8, ep: true}
+    lws: {size: 4, replicas: 1}
+    parallelism: {tp: 1, dp: 16, ep: true}
     kv_transfer_config:
       kv_connector: NixlConnector
-      kv_role: kv_consumer
+      kv_role: kv_both
+      kv_buffer_device: cuda
       kv_load_failure_policy: fail
     computed:
       env: {MAX_TOKENS: max_concurrency}
@@ -28,55 +29,65 @@ roles:
         max_num_seqs: max_concurrency
         max_cudagraph_capture_size: max_concurrency
     env:
-      VLLM_SKIP_P2P_CHECK: "1"
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+      VLLM_USE_BREAKABLE_CUDAGRAPH: "1"
+      VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
+      ACTIVATION_V2_GRID_Y: "512"
+      VLLM_COMPUTE_NANS_IN_LOGITS: "1"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_USE_DEEP_GEMM: "1"
+      DEEPEP_METRICS_ENABLED: "1"
     resources:
-      ephemeral_storage: 1Ti
+      ephemeral_storage: 128Gi
     vllm:
-      tokenizer_mode: deepseek_v4
+      load_format: auto
+      disable_uvicorn_access_log: true
       gpu_memory_utilization: "0.85"
       trust_remote_code: true
-      api_server_count: 4
-      disable_access_log_for_endpoints: /health,/metrics
-      data_parallel_hybrid_lb: true
-      enable_ep_weight_filter: true
-      moe_backend: deep_gemm_mega_moe
-      block_size: 256
       no_disable_hybrid_kv_cache_manager: true
+      attention_config.use_fp4_indexer_cache: "True"
+      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, custom_ops: [all]}
+      enable_force_include_usage: true
+      enable_eplb: true
+      eplb_config:
+        window_size: "100"
+        step_interval: "3000"
+        num_redundant_experts: "32"
+        log_balancedness: "False"
+        use_async: "True"
+        communicator: nixl
+        log_balancedness_interval: "1000"
+      kernel_config: {enable_flashinfer_autotune: false}
+      all2all_backend: deepep_v2
+      kv_cache_dtype: fp8
+      block_size: 256
       enable_cumem_allocator: true
       stream_interval: 50
-      kv_cache_dtype: fp8
-      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
 
   - name: prefill
-    lws: {size: 2, replicas: 2}
+    lws: {size: 2, replicas: 1}
     parallelism: {tp: 1, dp: 8, ep: true}
+    dp_load_balancing: external
     kv_transfer_config:
       kv_connector: NixlConnector
-      kv_role: kv_producer
+      kv_role: kv_both
+      kv_buffer_device: cuda
       kv_load_failure_policy: fail
     env:
-      VLLM_SKIP_P2P_CHECK: "1"
+      VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
+      VLLM_COMPUTE_NANS_IN_LOGITS: "1"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_USE_DEEP_GEMM: "1"
-      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "1024"
-      VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE: "2048"
-      VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
     resources:
-      ephemeral_storage: 1Ti
+      ephemeral_storage: 128Gi
     vllm:
-      tokenizer_mode: deepseek_v4
+      load_format: auto
+      disable_uvicorn_access_log: true
       trust_remote_code: true
-      api_server_count: 4
-      disable_access_log_for_endpoints: /health,/metrics
-      data_parallel_hybrid_lb: true
-      enable_ep_weight_filter: true
       moe_backend: deep_gemm_mega_moe
-      enforce_eager: true
-      block_size: 256
-      no_async_scheduling: true
-      no_disable_hybrid_kv_cache_manager: true
-      enable_cumem_allocator: true
-      numa_bind: true
+      gpu_memory_utilization: "0.85"
       kv_cache_dtype: fp8
+      block_size: 256
+      no_disable_hybrid_kv_cache_manager: true
+      attention_config.use_fp4_indexer_cache: "True"
+      enable_force_include_usage: true

@@ -121,7 +121,7 @@ just nyann-stop
 - `models/qwen/aggregated.yaml` - Aggregated Qwen example.
 - `models/deepseek-v4/wide-ep-base.yaml` - Shared DeepSeek V4 wide-EP base.
 - `models/deepseek-v4/1P-EP8-1D-EP8.yaml` - DeepSeek V4 P/D EP8 example.
-- `models/deepseek-v4/3P-EP8-2D-EP16.yaml` - DeepSeek V4 wider decode example.
+- `models/deepseek-v4/3P-EP8-1D-EP16.yaml` - DeepSeek V4 wider decode example.
 - `monitoring/` - Prometheus/Grafana Helm values and dashboards.
 
 ## Development Workflow

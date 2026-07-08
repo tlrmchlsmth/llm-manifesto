@@ -184,4 +184,7 @@ def test_prefill_launch_uses_global_tp_and_local_gpu_span():
     script = container["args"][0]
 
     assert "--tensor-parallel-size 1" in script
-    assert "GPU_START=$((R * 1))" in script
+    assert "DP_SIZE=8" in script
+    assert "--data-parallel-multi-port-external-lb" in script
+    assert "--data-parallel-start-rank $START_RANK" in script
+    assert "--data-parallel-rank" not in script

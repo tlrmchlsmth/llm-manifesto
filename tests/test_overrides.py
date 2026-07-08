@@ -38,12 +38,12 @@ def test_role_map_rejects_unknown_role():
 
 
 @pytest.mark.parametrize(
-    ("config", "prefill_replicas", "decode_size", "decode_replicas", "decode_dp", "moe_backend", "all2all"),
+    ("config", "prefill_replicas", "decode_size", "decode_replicas", "decode_dp"),
     [
-        ("1P-EP8-1D-EP8.yaml", 1, 2, 1, 8, "deep_gemm_mega_moe", None),
-        ("2P-EP8-1D-EP8.yaml", 2, 2, 1, 8, "deep_gemm_mega_moe", None),
-        ("3P-EP8-1D-EP8.yaml", 3, 2, 1, 8, "deep_gemm_mega_moe", None),
-        ("3P-EP8-2D-EP16.yaml", 3, 4, 2, 16, "auto", "flashinfer_nvlink_one_sided"),
+        ("1P-EP8-1D-EP8.yaml", 1, 2, 1, 8),
+        ("2P-EP8-1D-EP8.yaml", 2, 2, 1, 8),
+        ("3P-EP8-1D-EP8.yaml", 3, 2, 1, 8),
+        ("3P-EP8-1D-EP16.yaml", 3, 4, 1, 16),
     ],
 )
 def test_deepseek_v4_llmd_guide_variants_expand(
@@ -52,8 +52,6 @@ def test_deepseek_v4_llmd_guide_variants_expand(
     decode_size: int,
     decode_replicas: int,
     decode_dp: int,
-    moe_backend: str,
-    all2all: str | None,
 ):
     spec = load_spec(ROOT / "models" / "deepseek-v4" / config, CLUSTER)
     decode = spec.role("decode")
@@ -68,13 +66,71 @@ def test_deepseek_v4_llmd_guide_variants_expand(
     assert prefill.tensor_parallel_size == 1
     assert prefill.data_parallel.enabled is True
     assert prefill.data_parallel.local_size == 4
-    assert prefill.kv_transfer_config["kv_role"] == "kv_producer"
+    assert prefill.kv_transfer_config["kv_role"] == "kv_both"
 
     assert decode.lws.size == decode_size
     assert decode.lws.replicas == decode_replicas
     assert decode.tensor_parallel_size == 1
     assert decode.data_parallel.enabled is True
     assert decode.data_parallel.local_size == decode_dp // decode_size
-    assert decode.kv_transfer_config["kv_role"] == "kv_consumer"
-    assert decode.vllm_args["moe_backend"] == moe_backend
-    assert decode.vllm_args.get("all2all_backend") == all2all
+    assert decode.kv_transfer_config["kv_role"] == "kv_both"
+    if decode_dp == 8:
+        assert decode.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
+        assert "all2all_backend" not in decode.vllm_args
+        assert decode.vllm_args["enable_eplb"] is False
+        assert "eplb_config" not in decode.vllm_args
+    else:
+        assert decode.vllm_args["all2all_backend"] == "deepep_v2"
+        assert decode.vllm_args["enable_eplb"] is True
+        assert decode.vllm_args["eplb_config"]["num_redundant_experts"] == "32"
+
+
+def test_nested_eplb_config_can_be_overridden_without_restatement():
+    merged = merge_overrides(
+        {
+            "roles": [
+                {
+                    "name": "decode",
+                    "vllm": {
+                        "eplb_config": {
+                            "window_size": "100",
+                            "num_redundant_experts": "32",
+                        }
+                    },
+                }
+            ]
+        },
+        {"roles": {"decode": {"vllm": {"eplb_config": {"num_redundant_experts": "16"}}}}},
+    )
+
+    assert merged["roles"][0]["vllm"]["eplb_config"] == {
+        "window_size": "100",
+        "num_redundant_experts": "16",
+    }
+
+
+def test_override_can_delete_inherited_key():
+    merged = merge_overrides(
+        {"roles": [{"name": "decode", "vllm": {"moe_backend": "auto", "all2all_backend": "deepep_v2"}}]},
+        {"roles": {"decode": {"vllm": {"moe_backend": "deep_gemm_mega_moe", "all2all_backend": "$delete"}}}},
+    )
+
+    assert merged["roles"][0]["vllm"] == {"moe_backend": "deep_gemm_mega_moe"}
+
+
+def test_deepseek_v4_ep8_decode_uses_megagemm_without_all2all():
+    spec = load_spec(ROOT / "models" / "deepseek-v4" / "1P-EP8-1D-EP8.yaml", CLUSTER)
+    decode = spec.role("decode")
+
+    assert decode.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
+    assert "all2all_backend" not in decode.vllm_args
+    assert decode.vllm_args["enable_eplb"] is False
+    assert "eplb_config" not in decode.vllm_args
+
+
+def test_deepseek_v4_ep16_decode_inherits_deepep_v2():
+    spec = load_spec(ROOT / "models" / "deepseek-v4" / "3P-EP8-1D-EP16.yaml", CLUSTER)
+    decode = spec.role("decode")
+
+    assert decode.vllm_args["all2all_backend"] == "deepep_v2"
+    assert decode.vllm_args["enable_eplb"] is True

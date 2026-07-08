@@ -26,12 +26,12 @@ def test_compact_parallelism_and_equations_resolve_to_runtime_values():
     assert role.expert_parallel.enabled is True
     assert role.dp_load_balancing == DpLoadBalancing.EXTERNAL
 
-    assert resolved.env["MAX_TOKENS"] == "512"
+    assert resolved.env["MAX_TOKENS"] == "1024"
     assert resolved.env["UCX_NET_DEVICES"] == CLUSTER.ucx_net_devices
-    assert resolved.env["NVSHMEM_QP_DEPTH"] == "1026"
-    assert resolved.vllm_args["max_num_batched_tokens"] == 512
-    assert resolved.vllm_args["max_num_seqs"] == 512
-    assert resolved.vllm_args["max_cudagraph_capture_size"] == 512
+    assert resolved.env["NVSHMEM_QP_DEPTH"] == "2050"
+    assert resolved.vllm_args["max_num_batched_tokens"] == 1024
+    assert resolved.vllm_args["max_num_seqs"] == 1024
+    assert resolved.vllm_args["max_cudagraph_capture_size"] == 1024
 
 
 def test_fabric_profiles_are_cluster_config_driven():
@@ -56,7 +56,7 @@ def test_dp_is_global_and_local_dp_is_derived_from_lws_nodes():
     assert role.routing_sidecar is True
     assert role.serving_port_base == 8000
     assert role.backend_port_base == 8200
-    assert resolved.env["MAX_TOKENS"] == "512"
+    assert resolved.env["MAX_TOKENS"] == "1024"
 
 
 def test_pd_topology_adds_decode_routing_proxy_defaults():

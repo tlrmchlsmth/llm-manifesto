@@ -37,7 +37,9 @@ def _load_spec_data(path: Path, *, seen: list[Path]) -> dict[str, Any]:
 def merge_overrides(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
     for key, value in override.items():
-        if key == "roles" and isinstance(value, dict):
+        if value == "$delete":
+            merged.pop(key, None)
+        elif key == "roles" and isinstance(value, dict):
             merged[key] = _merge_roles(merged.get(key, []), value)
         elif isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = merge_overrides(merged[key], value)
