@@ -64,13 +64,13 @@ Renderer workflow:
 
 ```bash
 just render models/qwen/aggregated.yaml
-just render-file models/deepseek-v4-gb200/pd.yaml --dev
+just render-file models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 just diff-file
 just apply-file
-just start models/deepseek-v4-gb200/pd.yaml --dev
-just ready models/deepseek-v4-gb200/pd.yaml
-just restart models/deepseek-v4-gb200/pd.yaml --dev
-just stop models/deepseek-v4-gb200/pd.yaml
+just start models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
+just ready models/deepseek-v4/1P-EP8-1D-EP8.yaml
+just restart models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
+just stop models/deepseek-v4/1P-EP8-1D-EP8.yaml
 ```
 
 Monitoring and diagnostics:
@@ -95,7 +95,7 @@ just dev
 just dev-build
 just dev-build-log
 just dev-stop
-just flush-cache models/deepseek-v4-gb200/pd.yaml --dev
+just flush-cache models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 ```
 
 Nyann benchmark workflow:
@@ -119,8 +119,9 @@ just nyann-stop
 - `clusters/oci-gb200.yaml` - GB200 cluster profile.
 - `clusters/cks-h200.yaml` - CoreWeave H200 cluster profile.
 - `models/qwen/aggregated.yaml` - Aggregated Qwen example.
-- `models/deepseek-v4-gb200/pd.yaml` - P/D DeepSeek example.
-- `models/deepseek-v4-gb200/aggregated.yaml` - Aggregated DeepSeek example.
+- `models/deepseek-v4/wide-ep-base.yaml` - Shared DeepSeek V4 wide-EP base.
+- `models/deepseek-v4/1P-EP8-1D-EP8.yaml` - DeepSeek V4 P/D EP8 example.
+- `models/deepseek-v4/3P-EP8-2D-EP16.yaml` - DeepSeek V4 wider decode example.
 - `monitoring/` - Prometheus/Grafana Helm values and dashboards.
 
 ## Development Workflow

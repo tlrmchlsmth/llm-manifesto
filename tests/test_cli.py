@@ -7,7 +7,7 @@ import manifesto.workflow as workflow
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = ROOT / "models" / "deepseek-v4-gb200" / "pd.yaml"
+MODEL = ROOT / "models" / "deepseek-v4" / "1P-EP8-1D-EP8.yaml"
 CLUSTER = ROOT / "clusters" / "oci-gb200.yaml"
 
 
@@ -26,7 +26,7 @@ def test_cache_path_cli_accepts_cluster_template_override(capsys):
     )
 
     assert rc == 0
-    assert capsys.readouterr().out.strip() == "/tmp/cache/tester-name/wide-ep/cu13"
+    assert capsys.readouterr().out.strip() == "/tmp/cache/tester-name/wide-ep-1p-ep8-1d-ep8/cu13"
 
 
 def test_render_cli_dev_venv_override(capsys):

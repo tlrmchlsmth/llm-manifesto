@@ -1,8 +1,0 @@
-# Equivalent to llm-d deployments/oci-max-tpt:
-# 3 prefill DEP8 workers plus 1 decode DEP8 worker, 8 nodes / 32 GPUs.
-extends: llmd-base.yaml
-release: wide-ep-dsv4-max-tpt
-
-roles:
-  prefill:
-    lws: {replicas: 3}

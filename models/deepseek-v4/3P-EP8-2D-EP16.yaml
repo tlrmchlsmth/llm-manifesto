@@ -1,7 +1,6 @@
-# Equivalent to llm-d deployments/oci-3p2d-dep8-dep16-flashinfer:
-# 3 prefill DEP8 workers plus 2 decode DEP16 workers, 14 nodes / 56 GPUs.
-extends: llmd-base.yaml
-release: wide-ep-dsv4-3p2d-fi
+# 3 prefill EP8 workers plus 2 decode EP16 workers, 14 nodes / 56 GPUs.
+extends: wide-ep-base.yaml
+release: wide-ep-3p-ep8-2d-ep16
 
 roles:
   prefill:

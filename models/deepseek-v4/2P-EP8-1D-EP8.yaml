@@ -1,0 +1,3 @@
+# 2 prefill EP8 workers plus 1 decode EP8 worker, 6 nodes / 24 GPUs.
+extends: wide-ep-base.yaml
+release: wide-ep-2p-ep8-1d-ep8

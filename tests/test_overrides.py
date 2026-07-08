@@ -40,10 +40,10 @@ def test_role_map_rejects_unknown_role():
 @pytest.mark.parametrize(
     ("config", "prefill_replicas", "decode_size", "decode_replicas", "decode_dp", "moe_backend", "all2all"),
     [
-        ("llmd-oci-mid-curve.yaml", 1, 2, 1, 8, "deep_gemm_mega_moe", None),
-        ("llmd-oci-high-tpt.yaml", 2, 2, 1, 8, "deep_gemm_mega_moe", None),
-        ("llmd-oci-max-tpt.yaml", 3, 2, 1, 8, "deep_gemm_mega_moe", None),
-        ("llmd-oci-3p2d-dep8-dep16-flashinfer.yaml", 3, 4, 2, 16, "auto", "flashinfer_nvlink_one_sided"),
+        ("1P-EP8-1D-EP8.yaml", 1, 2, 1, 8, "deep_gemm_mega_moe", None),
+        ("2P-EP8-1D-EP8.yaml", 2, 2, 1, 8, "deep_gemm_mega_moe", None),
+        ("3P-EP8-1D-EP8.yaml", 3, 2, 1, 8, "deep_gemm_mega_moe", None),
+        ("3P-EP8-2D-EP16.yaml", 3, 4, 2, 16, "auto", "flashinfer_nvlink_one_sided"),
     ],
 )
 def test_deepseek_v4_llmd_guide_variants_expand(
@@ -55,7 +55,7 @@ def test_deepseek_v4_llmd_guide_variants_expand(
     moe_backend: str,
     all2all: str | None,
 ):
-    spec = load_spec(ROOT / "models" / "deepseek-v4-gb200" / config, CLUSTER)
+    spec = load_spec(ROOT / "models" / "deepseek-v4" / config, CLUSTER)
     decode = spec.role("decode")
     prefill = spec.role("prefill")
 

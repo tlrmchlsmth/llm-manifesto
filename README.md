@@ -52,7 +52,7 @@ uv run manifesto render models/qwen/aggregated.yaml \
 Render to a file, edit it, diff it, then apply it:
 
 ```bash
-manifesto render-file models/deepseek-v4-gb200/pd.yaml --dev
+manifesto render-file models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 $EDITOR /tmp/$USER-manifesto.yaml
 manifesto diff
 manifesto apply
@@ -61,15 +61,15 @@ manifesto apply
 Deploy directly:
 
 ```bash
-manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev
-manifesto ready models/deepseek-v4-gb200/pd.yaml
+manifesto deploy models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
+manifesto ready models/deepseek-v4/1P-EP8-1D-EP8.yaml
 ```
 
 Stop the instance:
 
 ```bash
-manifesto stop models/deepseek-v4-gb200/pd.yaml
-manifesto stop models/deepseek-v4-gb200/pd.yaml --now
+manifesto stop models/deepseek-v4/1P-EP8-1D-EP8.yaml
+manifesto stop models/deepseek-v4/1P-EP8-1D-EP8.yaml --now
 ```
 
 ## Repository Layout
@@ -97,8 +97,8 @@ Examples:
 
 ```text
 models/qwen/aggregated.yaml
-models/deepseek-v4-gb200/pd.yaml
-models/deepseek-v4-gb200/aggregated.yaml
+models/deepseek-v4/1P-EP8-1D-EP8.yaml
+models/deepseek-v4/3P-EP8-2D-EP16.yaml
 ```
 
 A spec chooses the topology, roles, parallelism, vLLM args, and routing behavior.
@@ -135,8 +135,8 @@ arguments are derived from the LWS size and GPUs per pod.
 Specs can also extend a base YAML file and override only the fields that differ:
 
 ```yaml
-extends: llmd-base.yaml
-release: wide-ep-dsv4-high-tpt
+extends: wide-ep-base.yaml
+release: wide-ep-2p-ep8-1d-ep8
 
 roles:
   prefill:
@@ -146,6 +146,12 @@ roles:
 Overrides deep-merge mappings. `roles` may be written as a map keyed by role
 name in override files; each role override is merged into the matching base
 role before normal schema validation.
+
+DeepSeek V4 wide-EP specs use filenames that encode only the parallel layout:
+`<prefill-replicas>P-EP<width>-<decode-replicas>D-EP<width>.yaml`. For example,
+`3P-EP8-2D-EP16.yaml` means three prefill LWS replicas at EP8 and two decode
+LWS replicas at EP16. Backend choices stay inside the YAML because optimal
+backends can change independently of the parallel layout.
 
 ## Cluster Profiles
 
@@ -185,7 +191,7 @@ The file workflow is the preferred path when you want to share or tweak exactly
 what will be deployed:
 
 ```bash
-manifesto render-file models/deepseek-v4-gb200/pd.yaml --dev
+manifesto render-file models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 $EDITOR /tmp/$USER-manifesto.yaml
 manifesto diff
 manifesto apply
@@ -212,8 +218,8 @@ Examples:
 
 ```bash
 manifesto deploy models/qwen/aggregated.yaml
-manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev
-manifesto deploy-routing models/deepseek-v4-gb200/pd.yaml
+manifesto deploy models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
+manifesto deploy-routing models/deepseek-v4/1P-EP8-1D-EP8.yaml
 ```
 
 Every rendered object is scoped by the instance identity:
@@ -241,14 +247,14 @@ just dev-build-log
 Deploy a model with the dev venv:
 
 ```bash
-manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev
+manifesto deploy models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 ```
 
 The venv and source paths come from the cluster profile and can be overridden at
 render time:
 
 ```bash
-manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev \
+manifesto deploy models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev \
   --dev-venv /mnt/lustre/$USER/custom-vllm-venv
 ```
 
