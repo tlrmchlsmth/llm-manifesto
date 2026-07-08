@@ -61,6 +61,27 @@ def test_dp_ports_feed_container_readiness_and_inferencepool():
     assert "--data-parallel-rank" not in script
 
 
+def test_deepseek_lws_uses_short_workload_names_with_full_instance_labels():
+    objects = _objects(DEEPSEEK)
+    decode = _find(objects, "LeaderWorkerSet", "decode")
+    prefill = _find(objects, "LeaderWorkerSet", "prefill")
+
+    assert decode["metadata"]["name"] == "tester-vllm-ep8-decode"
+    assert prefill["metadata"]["name"] == "tester-vllm-ep8-prefill"
+    assert decode["metadata"]["labels"]["app.kubernetes.io/instance"] == "tester-wide-ep-1p-ep8-1d-ep8"
+    assert prefill["metadata"]["labels"]["app.kubernetes.io/instance"] == "tester-wide-ep-1p-ep8-1d-ep8"
+
+
+def test_deepseek_ep16_decode_name_keeps_decode_width():
+    spec = load_spec(ROOT / "models" / "deepseek-v4" / "3P-EP8-1D-EP16.yaml", CLUSTER)
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    decode = _find(objects, "LeaderWorkerSet", "decode")
+    prefill = _find(objects, "LeaderWorkerSet", "prefill")
+
+    assert decode["metadata"]["name"] == "tester-vllm-ep16-decode"
+    assert prefill["metadata"]["name"] == "tester-vllm-ep8-prefill"
+
+
 def test_logs_persist_to_cluster_log_root():
     objects = _objects(DEEPSEEK)
     lws = _find(objects, "LeaderWorkerSet", "decode")

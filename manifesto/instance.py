@@ -45,6 +45,10 @@ class Instance:
         limit = DNS_LABEL_MAX if hostname_safe else 253
         return _truncate_hash(f"{self.instance_id}-{_slug(component)}", limit)
 
+    def user_scoped_name(self, component: str, *, hostname_safe: bool = True) -> str:
+        limit = DNS_LABEL_MAX if hostname_safe else 253
+        return _truncate_hash(f"{self.user_slug}-{_slug(component)}", limit)
+
     def labels(self, component: str | None = None, role: str | None = None) -> dict[str, str]:
         labels = {
             "app.kubernetes.io/name": "manifesto",

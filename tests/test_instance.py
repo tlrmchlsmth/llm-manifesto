@@ -11,6 +11,12 @@ def test_names_are_prefixed_and_hostname_safe():
     assert len(name) <= 63
 
 
+def test_user_scoped_names_can_omit_release_slug():
+    instance = Instance(user="Tester.Name", release="wide-ep-1p-ep8-1d-ep8")
+
+    assert instance.user_scoped_name("vllm-ep8-prefill") == "tester-name-vllm-ep8-prefill"
+
+
 def test_selectors_are_disjoint_across_instances():
     a = Instance(user="alice", release="wide-ep")
     b = Instance(user="bob", release="wide-ep")

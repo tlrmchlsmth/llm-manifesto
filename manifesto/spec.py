@@ -66,6 +66,7 @@ class ResourceSpec(BaseModel):
 
 class RoleSpec(BaseModel):
     name: str
+    workload_name: str | None = None
     lws: LwsSpec = Field(default_factory=LwsSpec)
     gpus_per_pod: int = Field(4, ge=1, validation_alias=AliasChoices("gpus_per_pod", "gpus_per_node", "gpus"))
     tensor_parallel_size: int = Field(1, ge=1, validation_alias=AliasChoices("tensor_parallel_size", "tp"))

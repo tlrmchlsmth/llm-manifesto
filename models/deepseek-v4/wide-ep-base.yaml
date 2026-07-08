@@ -15,6 +15,7 @@ vars:
 
 roles:
   - name: decode
+    workload_name: vllm-ep16-decode
     lws: {size: 4, replicas: 1}
     parallelism: {tp: 1, dp: 16, ep: true}
     kv_transfer_config:
@@ -65,6 +66,7 @@ roles:
       stream_interval: 50
 
   - name: prefill
+    workload_name: vllm-ep8-prefill
     lws: {size: 2, replicas: 1}
     parallelism: {tp: 1, dp: 8, ep: true}
     dp_load_balancing: external

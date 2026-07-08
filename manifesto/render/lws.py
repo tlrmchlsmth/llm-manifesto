@@ -14,6 +14,7 @@ from ..spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
     resolved = resolve_role(spec, instance, cluster, role)
     external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
+    lws_name = instance.user_scoped_name(role.workload_name) if role.workload_name else instance.name(role.name)
 
     containers, extra_volumes = sidecars(
         spec.runtime.sidecars,
@@ -148,7 +149,7 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
         "apiVersion": "leaderworkerset.x-k8s.io/v1",
         "kind": "LeaderWorkerSet",
         "metadata": {
-            "name": instance.name(role.name),
+            "name": lws_name,
             "labels": instance.labels("lws", role.name)
             | {
                 "llm-d.ai/inferenceServing": "true",
