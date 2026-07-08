@@ -1,0 +1,8 @@
+# Equivalent to llm-d deployments/oci-mid-curve:
+# 1 prefill DEP8 worker plus 1 decode DEP8 worker, 4 nodes / 16 GPUs.
+extends: llmd-base.yaml
+release: wide-ep-dsv4-mid-curve
+
+roles:
+  prefill:
+    lws: {replicas: 1}

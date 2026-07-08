@@ -132,6 +132,21 @@ roles:
 `tp` and `dp` are global sizes. Local DP, port fanout, and per-pod launch
 arguments are derived from the LWS size and GPUs per pod.
 
+Specs can also extend a base YAML file and override only the fields that differ:
+
+```yaml
+extends: llmd-base.yaml
+release: wide-ep-dsv4-high-tpt
+
+roles:
+  prefill:
+    lws: {replicas: 2}
+```
+
+Overrides deep-merge mappings. `roles` may be written as a map keyed by role
+name in override files; each role override is merged into the matching base
+role before normal schema validation.
+
 ## Cluster Profiles
 
 Cluster profiles live under `clusters/`.

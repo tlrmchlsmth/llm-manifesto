@@ -1,0 +1,14 @@
+# Equivalent to llm-d deployments/oci-3p2d-dep8-dep16-flashinfer:
+# 3 prefill DEP8 workers plus 2 decode DEP16 workers, 14 nodes / 56 GPUs.
+extends: llmd-base.yaml
+release: wide-ep-dsv4-3p2d-fi
+
+roles:
+  prefill:
+    lws: {replicas: 3}
+  decode:
+    lws: {size: 4, replicas: 2}
+    parallelism: {tp: 1, dp: 16, ep: true}
+    vllm:
+      moe_backend: auto
+      all2all_backend: flashinfer_nvlink_one_sided
