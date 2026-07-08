@@ -326,6 +326,30 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
         {
             "apiVersion": "networking.istio.io/v1",
             "kind": "DestinationRule",
+            "metadata": {"name": epp_name, "labels": instance.labels("epp")},
+            "spec": {
+                "host": epp_name,
+                "trafficPolicy": {
+                    "connectionPool": {
+                        "tcp": {
+                            "connectTimeout": "900s",
+                            "maxConnectionDuration": "1800s",
+                            "maxConnections": 256000,
+                        },
+                        "http": {
+                            "http1MaxPendingRequests": 256000,
+                            "http2MaxRequests": 256000,
+                            "idleTimeout": "900s",
+                            "maxRequestsPerConnection": 256000,
+                        },
+                    },
+                    "tls": {"insecureSkipVerify": True, "mode": "SIMPLE"},
+                },
+            },
+        },
+        {
+            "apiVersion": "networking.istio.io/v1",
+            "kind": "DestinationRule",
             "metadata": {"name": instance.name("infpool-backend"), "labels": instance.labels("routing")},
             "spec": {
                 "host": f"{infpool_name}-ip",
