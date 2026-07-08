@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import subprocess
 import sys
 
 from .render import render, render_to_yaml
@@ -12,20 +13,36 @@ from .instance import Instance
 from .cluster import load_cluster
 from .spec import load_spec
 from .warnings import collect_warnings
+from .workflow import (
+    RuntimeConfig,
+    WorkflowError,
+    apply_file,
+    delete_file,
+    deploy,
+    diff_file,
+    ready,
+    render_manifest,
+    render_to_file,
+    stop,
+)
 
 
 def _render(args: argparse.Namespace, *, routing_only: bool = False) -> int:
-    user = args.user or os.environ.get("USER") or "dev"
-    cluster = _load_cluster(args)
-    spec = load_spec(args.spec, cluster)
-    _apply_runtime_overrides(spec, args)
-    _print_warnings(spec)
-    sys.stdout.write(
-        render_to_yaml(
-            render(spec, user=user, cluster=cluster, routing_only=routing_only),
-            header=_manifest_header(args, user=user, routing_only=routing_only),
+    if args.cluster:
+        user = args.user or os.environ.get("USER") or "dev"
+        cluster = _load_cluster(args)
+        spec = load_spec(args.spec, cluster)
+        _apply_runtime_overrides(spec, args)
+        _print_warnings(spec)
+        sys.stdout.write(
+            render_to_yaml(
+                render(spec, user=user, cluster=cluster, routing_only=routing_only),
+                header=_manifest_header(args, user=user, routing_only=routing_only),
+            )
         )
-    )
+        return 0
+    config = RuntimeConfig.from_args(args)
+    sys.stdout.write(render_manifest(args, config, routing_only=routing_only))
     return 0
 
 
@@ -84,7 +101,7 @@ def _manifest_header(args: argparse.Namespace, *, user: str, routing_only: bool)
 
 def _add_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("spec")
-    parser.add_argument("--cluster", required=True)
+    parser.add_argument("--cluster")
     parser.add_argument("--namespace")
     parser.add_argument("--user")
     parser.add_argument("--dev", action="store_true")
@@ -95,30 +112,55 @@ def _add_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--pre-launch", action="append", default=[])
 
 
+def _render_file(args: argparse.Namespace) -> int:
+    print(render_to_file(args))
+    return 0
+
+
+def _edit_file(args: argparse.Namespace) -> int:
+    path = render_to_file(args)
+    editor = os.environ.get("EDITOR", "vi")
+    return subprocess.run([*shlex.split(editor), str(path)]).returncode
+
+
+def _add_file_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--namespace")
+    parser.add_argument("--user")
+    parser.add_argument("--output")
+
+
+def _add_ready_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("spec")
+    parser.add_argument("--cluster")
+    parser.add_argument("--namespace")
+    parser.add_argument("--user")
+    parser.add_argument("--gateway-timeout", type=int, default=120)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="manifesto")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    render_parser = sub.add_parser("render")
+    render_parser = sub.add_parser("render", help="render Kubernetes YAML to stdout")
     _add_render_args(render_parser)
     render_parser.set_defaults(func=lambda args: _render(args, routing_only=False))
 
-    routing_parser = sub.add_parser("render-routing")
+    routing_parser = sub.add_parser("render-routing", help="render routing-only Kubernetes YAML to stdout")
     _add_render_args(routing_parser)
     routing_parser.set_defaults(func=lambda args: _render(args, routing_only=True))
 
-    instance_parser = sub.add_parser("instance-id")
+    instance_parser = sub.add_parser("instance-id", help="print the instance label value for a spec")
     instance_parser.add_argument("spec")
     instance_parser.add_argument("--user")
     instance_parser.set_defaults(func=_instance_id)
 
-    name_parser = sub.add_parser("name")
+    name_parser = sub.add_parser("name", help="print a generated component name for a spec")
     name_parser.add_argument("spec")
     name_parser.add_argument("component")
     name_parser.add_argument("--user")
     name_parser.set_defaults(func=_name)
 
-    cache_parser = sub.add_parser("cache-path")
+    cache_parser = sub.add_parser("cache-path", help="print the resolved compile cache path")
     cache_parser.add_argument("spec")
     cache_parser.add_argument("--cluster", required=True)
     cache_parser.add_argument("--user")
@@ -128,8 +170,52 @@ def main(argv: list[str] | None = None) -> int:
     cache_parser.add_argument("--dev-source")
     cache_parser.set_defaults(func=_cache_path)
 
-    args = parser.parse_args(argv)
-    return args.func(args)
+    render_file_parser = sub.add_parser("render-file", help="render a full manifest to the workflow file")
+    _add_render_args(render_file_parser)
+    render_file_parser.add_argument("-o", "--output")
+    render_file_parser.set_defaults(func=_render_file)
+
+    edit_file_parser = sub.add_parser("edit-file", help="render to the workflow file and open it in $EDITOR")
+    _add_render_args(edit_file_parser)
+    edit_file_parser.add_argument("-o", "--output")
+    edit_file_parser.set_defaults(func=_edit_file)
+
+    diff_parser = sub.add_parser("diff", help="kubectl diff the workflow file")
+    _add_file_args(diff_parser)
+    diff_parser.set_defaults(func=diff_file)
+
+    apply_parser = sub.add_parser("apply", help="kubectl apply the workflow file")
+    _add_file_args(apply_parser)
+    apply_parser.set_defaults(func=apply_file)
+
+    delete_parser = sub.add_parser("delete", help="kubectl delete objects from the workflow file")
+    _add_file_args(delete_parser)
+    delete_parser.add_argument("--now", action="store_true")
+    delete_parser.set_defaults(func=delete_file)
+
+    deploy_parser = sub.add_parser("deploy", help="render a spec and apply it to the cluster")
+    _add_render_args(deploy_parser)
+    deploy_parser.set_defaults(func=lambda args: deploy(args, routing_only=False))
+
+    deploy_routing_parser = sub.add_parser("deploy-routing", help="render and apply routing objects only")
+    _add_render_args(deploy_routing_parser)
+    deploy_routing_parser.set_defaults(func=lambda args: deploy(args, routing_only=True))
+
+    stop_parser = sub.add_parser("stop", help="render a spec and delete its objects from the cluster")
+    _add_render_args(stop_parser)
+    stop_parser.add_argument("--now", action="store_true")
+    stop_parser.set_defaults(func=stop)
+
+    ready_parser = sub.add_parser("ready", help="wait for model pods and gateway readiness")
+    _add_ready_args(ready_parser)
+    ready_parser.set_defaults(func=ready)
+
+    try:
+        args = parser.parse_args(argv)
+        return args.func(args)
+    except WorkflowError as exc:
+        print(str(exc), file=sys.stderr)
+        return exc.code
 
 
 def _instance_id(args: argparse.Namespace) -> int:

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from manifesto.cli import main
+import manifesto.workflow as workflow
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,3 +102,58 @@ def test_render_cli_pre_launch_hook(capsys):
 
     assert rc == 0
     assert "echo cli-hook" in capsys.readouterr().out
+
+
+def test_render_file_uses_env_defaults(tmp_path, monkeypatch, capsys):
+    output = tmp_path / "manifest.yaml"
+    monkeypatch.setenv("MANIFESTO_CLUSTER", str(CLUSTER))
+    monkeypatch.setenv("MANIFESTO_NAMESPACE", "workload-ns")
+    monkeypatch.setenv("USER", "tester")
+
+    rc = main(["render-file", str(MODEL), "--output", str(output), "--dev"])
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == str(output)
+    rendered = output.read_text()
+    assert f"#   manifesto render {MODEL} --cluster {CLUSTER} --namespace workload-ns --user tester --dev\n" in rendered
+    assert "namespace: workload-ns" in rendered
+
+
+def test_deploy_pipes_rendered_manifest_to_kubectl(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, *, input_text=None):
+        calls.append((cmd, input_text))
+        return 0
+
+    monkeypatch.setenv("MANIFESTO_CLUSTER", str(CLUSTER))
+    monkeypatch.setenv("MANIFESTO_NAMESPACE", "workload-ns")
+    monkeypatch.setenv("USER", "tester")
+    monkeypatch.setattr(workflow, "run", fake_run)
+
+    rc = main(["deploy", str(MODEL), "--dev"])
+
+    assert rc == 0
+    assert calls[0][0] == ["kubectl", "-n", "workload-ns", "apply", "-f", "-"]
+    assert "kind: LeaderWorkerSet" in calls[0][1]
+    assert "--dev" in calls[0][1]
+
+
+def test_apply_file_does_not_require_cluster(monkeypatch, tmp_path):
+    output = tmp_path / "manifest.yaml"
+    calls = []
+
+    def fake_run(cmd, *, input_text=None):
+        calls.append((cmd, input_text))
+        return 0
+
+    monkeypatch.delenv("MANIFESTO_CLUSTER", raising=False)
+    monkeypatch.delenv("MANIFESTO_CLUSTER_MAP", raising=False)
+    monkeypatch.setenv("MANIFESTO_NAMESPACE", "workload-ns")
+    monkeypatch.setenv("USER", "tester")
+    monkeypatch.setattr(workflow, "run", fake_run)
+
+    rc = main(["apply", "--output", str(output)])
+
+    assert rc == 0
+    assert calls == [(["kubectl", "-n", "workload-ns", "apply", "-f", str(output)], None)]

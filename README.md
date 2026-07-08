@@ -52,24 +52,24 @@ uv run manifesto render models/qwen/aggregated.yaml \
 Render to a file, edit it, diff it, then apply it:
 
 ```bash
-just render-file models/deepseek-v4-gb200/pd.yaml --dev
+manifesto render-file models/deepseek-v4-gb200/pd.yaml --dev
 $EDITOR /tmp/$USER-manifesto.yaml
-just diff-file
-just apply-file
+manifesto diff
+manifesto apply
 ```
 
 Deploy directly:
 
 ```bash
-just start models/deepseek-v4-gb200/pd.yaml --dev
-just ready models/deepseek-v4-gb200/pd.yaml
+manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev
+manifesto ready models/deepseek-v4-gb200/pd.yaml
 ```
 
 Stop the instance:
 
 ```bash
-just stop models/deepseek-v4-gb200/pd.yaml
-just stop models/deepseek-v4-gb200/pd.yaml true  # force
+manifesto stop models/deepseek-v4-gb200/pd.yaml
+manifesto stop models/deepseek-v4-gb200/pd.yaml --now
 ```
 
 ## Repository Layout
@@ -86,7 +86,7 @@ manifesto/                  Python renderer implementation
 clusters/               cluster profiles
 models/                 model deployment specs
 tests/                  renderer and UX tests
-Justfile                lifecycle, render/edit/apply, dev, monitoring, benchmark UX
+Justfile                legacy dev, monitoring, and benchmark commands
 ```
 
 ## Specs
@@ -151,13 +151,13 @@ spec:
 - llm-d release and EPP/routing-sidecar images
 - UCX/NCCL/NVSHMEM/IMEX fabric env profiles
 
-The Justfile requires an explicit cluster profile. Set `MANIFESTO_CLUSTER`
-directly, or set `MANIFESTO_CLUSTER_MAP` in `.env` as a local lookup table keyed
-by kube context or kube cluster name:
+The workflow CLI requires a cluster profile for commands that render a spec. Set
+`MANIFESTO_CLUSTER` directly, pass `--cluster`, or set `MANIFESTO_CLUSTER_MAP` in
+`.env` as a local lookup table keyed by kube context or kube cluster name:
 
 ```bash
-MANIFESTO_CLUSTER=clusters/oci-gb200.yaml just start models/qwen/aggregated.yaml
-just start models/qwen/h200-aggregated.yaml
+MANIFESTO_CLUSTER=clusters/oci-gb200.yaml manifesto deploy models/qwen/aggregated.yaml
+manifesto deploy models/qwen/h200-aggregated.yaml
 ```
 
 The namespace defaults to the current kube context namespace, falling back to
@@ -170,35 +170,35 @@ The file workflow is the preferred path when you want to share or tweak exactly
 what will be deployed:
 
 ```bash
-just render-file models/deepseek-v4-gb200/pd.yaml --dev
+manifesto render-file models/deepseek-v4-gb200/pd.yaml --dev
 $EDITOR /tmp/$USER-manifesto.yaml
-just diff-file
-just apply-file
+manifesto diff
+manifesto apply
 ```
 
-`diff-file` compares the rendered file against the live cluster with
-`kubectl diff`. `apply-file` applies that file as-is.
+`manifesto diff` compares the rendered file against the live cluster with
+`kubectl diff`. `manifesto apply` applies that file as-is. Use `-o`/`--output`
+with `render-file`, or set `MANIFESTO_RENDER_OUT`, to choose a different file.
 
-The render step performs no cluster I/O. Cluster operations are explicit Justfile
-commands.
+The low-level `manifesto render` command performs no cluster I/O when passed an
+explicit `--cluster`. Workflow commands such as `deploy`, `ready`, `diff`, and
+`apply` are the cluster-touching commands.
 
 ## Lifecycle Commands
 
 ```bash
-just start SPEC *ARGS          # render and apply a full stack
-just restart SPEC *ARGS        # force-delete LWS pods, then render and apply
-just stop SPEC [NOW]           # delete instance-scoped objects
-just ready SPEC                # wait for pods and gateway to serve
-just deploy-routing SPEC       # update routing only
-just flush-cache SPEC          # clear this instance's keyed JIT cache path
+manifesto deploy SPEC *ARGS          # render and apply a full stack
+manifesto stop SPEC [--now]          # delete instance-scoped objects
+manifesto ready SPEC                 # wait for pods and gateway to serve
+manifesto deploy-routing SPEC *ARGS  # update routing only
 ```
 
 Examples:
 
 ```bash
-just start models/qwen/aggregated.yaml
-just start models/deepseek-v4-gb200/pd.yaml --dev
-just deploy-routing models/deepseek-v4-gb200/pd.yaml
+manifesto deploy models/qwen/aggregated.yaml
+manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev
+manifesto deploy-routing models/deepseek-v4-gb200/pd.yaml
 ```
 
 Every rendered object is scoped by the instance identity:
@@ -226,14 +226,14 @@ just dev-build-log
 Deploy a model with the dev venv:
 
 ```bash
-just start models/deepseek-v4-gb200/pd.yaml --dev
+manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev
 ```
 
 The venv and source paths come from the cluster profile and can be overridden at
 render time:
 
 ```bash
-just start models/deepseek-v4-gb200/pd.yaml --dev \
+manifesto deploy models/deepseek-v4-gb200/pd.yaml --dev \
   --dev-venv /mnt/lustre/$USER/custom-vllm-venv
 ```
 
@@ -275,8 +275,8 @@ just nyann-stop
 Local tools:
 
 - `uv`
-- `just`
 - `kubectl`
+- `just` for legacy dev, monitoring, and benchmark workflows
 - `helm` for monitoring
 - `podman` for dev image workflows
 
@@ -294,14 +294,15 @@ NYANN_BENCH_DIR=/path/to/nyann-bench  # optional, for benchmarks
 Create namespace secrets:
 
 ```bash
-just create-secrets
+kubectl create secret generic hf-secret --from-literal=HF_TOKEN="$HF_TOKEN" -n "$MANIFESTO_NAMESPACE"
+kubectl create secret generic gh-token-secret --from-literal=GH_TOKEN="$GH_TOKEN" -n "$MANIFESTO_NAMESPACE"
 ```
 
 ## Test
 
 ```bash
 uv run --extra test pytest
-just --summary
+manifesto --help
 ```
 
 ## Design Bias
