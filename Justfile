@@ -134,7 +134,8 @@ ready SPEC:
   echo "Waiting for v2 model pods and EPP..."
   wait
   echo "Checking gateway..."
-  until {{KN}} exec deploy/$EPP -- curl -sf --max-time 5 http://$GATEWAY_SVC:80/v1/models 2>/dev/null | grep -q '"id"'
+  until curl -sf --max-time 5 http://$GATEWAY_SVC:80/v1/models 2>/dev/null | grep -q '"id"' || \
+    {{KN}} exec deploy/$EPP -- curl -sf --max-time 5 http://$GATEWAY_SVC:80/v1/models 2>/dev/null | grep -q '"id"'
   do
     sleep 2
   done
