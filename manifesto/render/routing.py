@@ -94,7 +94,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
     gateway_name = instance.name("inference-gateway")
     gateway_service = instance.name("inference-gateway-istio")
 
-    selector = instance.pod_selector(spec.routing.target_role) | {
+    selector = instance.pod_selector(None if spec.routing.kind == RoutingKind.PD else spec.routing.target_role) | {
         "llm-d.ai/inferenceServing": "true",
         "llm-d.ai/deployment": spec.topology.value,
     }

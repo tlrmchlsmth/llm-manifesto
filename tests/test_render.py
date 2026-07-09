@@ -141,12 +141,23 @@ def test_no_dp_qwen_uses_single_port_and_no_dp_flags():
     assert infpool["spec"]["targetPorts"] == [{"number": 8000}]
 
 
-def test_inferencepool_selector_is_instance_scoped():
+def test_pd_inferencepool_selector_includes_prefill_and_decode_roles():
     objects = _objects(DEEPSEEK)
     infpool = _find(objects, "InferencePool")
 
     selector = infpool["spec"]["selector"]["matchLabels"]
     assert selector["app.kubernetes.io/instance"] == "tester-wide-ep-1p-ep8-1d-ep8"
+    assert selector["llm-d.ai/deployment"] == "pd"
+    assert selector["llm-d.ai/inferenceServing"] == "true"
+    assert "llm-d.ai/role" not in selector
+
+
+def test_non_pd_inferencepool_selector_targets_decode_role():
+    objects = _objects("qwen/aggregated.yaml")
+    infpool = _find(objects, "InferencePool")
+
+    selector = infpool["spec"]["selector"]["matchLabels"]
+    assert selector["app.kubernetes.io/instance"] == "tester-qwen"
     assert selector["llm-d.ai/role"] == "decode"
 
 
