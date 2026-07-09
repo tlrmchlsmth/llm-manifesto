@@ -226,6 +226,10 @@ def ready(args) -> int:
     url = f"http://{gateway}:80/v1/models"
     deadline = time.monotonic() + args.gateway_timeout
     while time.monotonic() < deadline:
+        out = capture(["curl", "-sf", "--max-time", "5", url], check=False)
+        if '"id"' in out:
+            print("Ready.")
+            return 0
         out = capture(
             [*config.kubectl(), "exec", f"deploy/{epp}", "--", "curl", "-sf", "--max-time", "5", url],
             check=False,
