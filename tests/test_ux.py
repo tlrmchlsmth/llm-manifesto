@@ -4,6 +4,7 @@ from pathlib import Path
 
 from manifesto.cluster import load_cluster
 from manifesto.instance import Instance
+from manifesto.normalize import apply_cluster_defaults
 from manifesto.render import render
 from manifesto.resolve import resolve_role
 from manifesto.spec import DpLoadBalancing, RoutingKind, load_spec
@@ -98,6 +99,28 @@ def test_single_gpu_no_dp_role_derives_one_gpu_from_tp():
     role = spec.role("decode")
 
     assert role.gpus_per_pod == 1
+    assert role.resources.gpus == 1
+
+
+def test_explicit_resource_gpu_request_overrides_inferred_request():
+    normalized = apply_cluster_defaults(
+        {
+            "model": {"id": "model"},
+            "roles": [
+                {
+                    "name": "prefill",
+                    "lws": {"size": 1},
+                    "parallelism": {"tp": 1, "dp": 2},
+                    "resources": {"gpus": 1},
+                }
+            ],
+        },
+        gpus_per_node=8,
+        hf_home="/cache",
+    )
+
+    assert normalized["roles"][0]["gpus_per_pod"] == 2
+    assert normalized["roles"][0]["resources"]["gpus"] == 1
 
 
 def test_cluster_path_templates_feed_cache_dev_and_logs():

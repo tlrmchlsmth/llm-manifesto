@@ -104,7 +104,12 @@ def apply_cluster_defaults(data: dict[str, Any], *, gpus_per_node: int, hf_home:
     for role in normalized.get("roles", []):
         role_data = dict(role)
         if not _has_gpu_override(role_data):
-            role_data["gpus_per_pod"] = _infer_gpus_per_pod(role_data, cluster_gpus_per_node=gpus_per_node)
+            role_data["gpus_per_pod"] = _infer_gpus_per_pod(
+                role_data, cluster_gpus_per_node=gpus_per_node
+            )
+        resources = dict(role_data.get("resources") or {})
+        resources.setdefault("gpus", _configured_gpus_per_pod(role_data))
+        role_data["resources"] = resources
         roles.append(role_data)
     normalized["roles"] = roles
     return normalized
@@ -115,6 +120,17 @@ def _has_gpu_override(role: dict[str, Any]) -> bool:
         return True
     parallelism = role.get("parallelism", {})
     return isinstance(parallelism, dict) and any(key in parallelism for key in ("gpus_per_node", "gpus"))
+
+
+def _configured_gpus_per_pod(role: dict[str, Any]) -> int:
+    for key in ("gpus_per_pod", "gpus_per_node", "gpus"):
+        if key in role:
+            return int(role[key])
+    parallelism = role.get("parallelism", {})
+    for key in ("gpus_per_node", "gpus"):
+        if key in parallelism:
+            return int(parallelism[key])
+    raise ValueError("role GPU count was not configured")
 
 
 def _infer_gpus_per_pod(role: dict[str, Any], *, cluster_gpus_per_node: int) -> int:
