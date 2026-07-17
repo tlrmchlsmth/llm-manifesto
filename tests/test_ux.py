@@ -47,7 +47,7 @@ def test_fabric_profiles_are_cluster_config_driven():
     assert "NCCL_MNNVL_ENABLE" not in standard.env
 
 
-def test_dp_is_global_and_local_dp_is_derived_from_lws_nodes():
+def test_dp_is_global_and_local_dp_is_derived_from_lws_size():
     spec = load_spec(DEEPSEEK, CLUSTER)
     role = spec.role("decode")
     resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)

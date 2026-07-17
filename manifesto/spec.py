@@ -11,19 +11,17 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from .cluster import Cluster
 from .images import apply_image_refs
-from .normalize import apply_cluster_defaults, normalize_lws, normalize_role
+from .normalize import apply_cluster_defaults, normalize_role
 from .overrides import load_spec_data
 
 
 class TopologyKind(StrEnum):
     AGGREGATED = "aggregated"
     PD = "pd"
-    DECODE_BENCH = "decode_bench"
 
 
 class RoutingKind(StrEnum):
     LOAD_AWARE = "load_aware"
-    RANDOM = "random"
     PD = "pd"
     DISABLED = "disabled"
 
@@ -51,11 +49,6 @@ class ExpertParallelSpec(BaseModel):
 class LwsSpec(BaseModel):
     size: int = Field(1, ge=1)
     replicas: int = Field(1, ge=1)
-
-    @model_validator(mode="before")
-    @classmethod
-    def compact_aliases(cls, data: Any) -> Any:
-        return normalize_lws(data)
 
 
 class ResourceSpec(BaseModel):
@@ -113,8 +106,6 @@ class ModelSpec(BaseModel):
 class RuntimeSpec(BaseModel):
     dev: bool = False
     dev_venv: str | None = None
-    fork_repo: str = ""
-    fork_branch: str = ""
     env: dict[str, str] = Field(default_factory=dict)
     pre_launch: list[str] = Field(default_factory=list)
     sidecars: list[str] = Field(default_factory=lambda: ["dcgm-exporter", "node-exporter"])
