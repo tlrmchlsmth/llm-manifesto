@@ -1,10 +1,10 @@
-"""Tests for warning-only validation around risky parallelism combinations."""
+"""Tests for hard validation of impossible or contradictory role configurations."""
 
 import pytest
 from pydantic import ValidationError
 
+from manifesto.parallelism import parallel_layout
 from manifesto.spec import DeploymentSpec
-from manifesto.warnings import collect_warnings
 
 
 def _spec_with_role(role: dict) -> dict:
@@ -17,60 +17,80 @@ def _spec_with_role(role: dict) -> dict:
     }
 
 
-def test_global_dp_mismatch_warns():
-    spec = DeploymentSpec.model_validate(
-        _spec_with_role(
-            {
-                "name": "decode",
-                "lws": {"size": 4},
-                "parallelism": {"gpus_per_node": 4, "tp": 1, "dp": 10, "ep": True},
-            }
-        )
+def _role(role: dict) -> DeploymentSpec:
+    return DeploymentSpec.model_validate(_spec_with_role(role)).role(role["name"])
+
+
+def test_uneven_global_dp_split_is_an_error():
+    role = _role(
+        {
+            "name": "decode",
+            "lws": {"size": 4},
+            "parallelism": {"gpus_per_node": 4, "tp": 1, "dp": 10, "ep": True},
+        }
     )
 
-    assert any(w.code == "dp-not-evenly-split" for w in collect_warnings(spec))
+    with pytest.raises(ValueError, match="dp=10 does not divide evenly across 4 LWS nodes"):
+        parallel_layout(role)
 
 
-def test_global_tp_mismatch_warns():
-    spec = DeploymentSpec.model_validate(
-        _spec_with_role(
-            {
-                "name": "prefill",
-                "lws": {"size": 3},
-                "parallelism": {"gpus_per_node": 4, "tp": 10, "dp": False, "ep": True},
-            }
-        )
+def test_uneven_global_tp_split_is_an_error():
+    role = _role(
+        {
+            "name": "prefill",
+            "lws": {"size": 3},
+            "parallelism": {"gpus_per_node": 4, "tp": 10, "dp": False, "ep": True},
+        }
     )
 
-    assert any(w.code == "tp-not-evenly-split" for w in collect_warnings(spec))
+    with pytest.raises(ValueError, match="tp=10 does not divide evenly across 3 LWS nodes"):
+        parallel_layout(role)
 
 
-def test_no_dp_multiple_rank_slots_warns():
-    spec = DeploymentSpec.model_validate(
-        _spec_with_role(
-            {
-                "name": "prefill",
-                "lws": {"size": 1},
-                "parallelism": {"gpus_per_node": 4, "tp": 2, "dp": False, "ep": True},
-            }
-        )
+def test_idle_gpus_without_dp_is_an_error():
+    role = _role(
+        {
+            "name": "prefill",
+            "lws": {"size": 1},
+            "parallelism": {"gpus_per_node": 4, "tp": 2, "dp": False, "ep": True},
+        }
     )
 
-    assert any(w.code == "dp-disabled-multiple-local-ranks" for w in collect_warnings(spec))
+    with pytest.raises(ValueError, match="DP is disabled but local TP 2 leaves 2 of 4 GPUs idle"):
+        parallel_layout(role)
 
 
-def test_global_dp_local_partition_warns():
-    spec = DeploymentSpec.model_validate(
-        _spec_with_role(
-            {
-                "name": "decode",
-                "lws": {"size": 4},
-                "parallelism": {"gpus_per_node": 4, "tp": 2, "dp": 4, "ep": True},
-            }
-        )
+def test_dp_tp_gpu_partition_mismatch_is_an_error():
+    role = _role(
+        {
+            "name": "decode",
+            "lws": {"size": 4},
+            "parallelism": {"gpus_per_node": 4, "tp": 2, "dp": 4, "ep": True},
+        }
     )
 
-    assert any(w.code == "dp-gpu-partition-mismatch" for w in collect_warnings(spec))
+    with pytest.raises(ValueError, match="needs 2 GPUs per pod, got 4"):
+        parallel_layout(role)
+
+
+def test_gpus_not_divisible_by_local_tp_is_an_error():
+    role = _role(
+        {
+            "name": "decode",
+            "lws": {"size": 1},
+            "parallelism": {"gpus_per_node": 4, "tp": 3, "dp": False, "ep": True},
+        }
+    )
+
+    with pytest.raises(ValueError, match="4 GPUs per pod is not divisible by local TP 3"):
+        parallel_layout(role)
+
+
+def test_dp_true_is_rejected():
+    with pytest.raises(ValidationError, match="dp: true is ambiguous"):
+        DeploymentSpec.model_validate(
+            _spec_with_role({"name": "decode", "parallelism": {"tp": 1, "dp": True}})
+        )
 
 
 def test_routing_proxy_sets_default_port_bases():
@@ -92,35 +112,33 @@ def test_routing_proxy_sets_default_port_bases():
     assert role.backend_port_base == 8200
 
 
-def test_routing_proxy_with_internal_dp_warns():
-    spec = DeploymentSpec.model_validate(
-        _spec_with_role(
-            {
-                "name": "decode",
-                "lws": {"size": 4},
-                "parallelism": {"gpus_per_node": 4, "tp": 1, "dp": 16, "ep": True},
-                "routing_proxy": True,
-            }
+def test_routing_proxy_with_internal_dp_is_an_error():
+    with pytest.raises(ValidationError, match="routing_proxy requires dp_load_balancing: external"):
+        DeploymentSpec.model_validate(
+            _spec_with_role(
+                {
+                    "name": "decode",
+                    "lws": {"size": 4},
+                    "parallelism": {"gpus_per_node": 4, "tp": 1, "dp": 16, "ep": True},
+                    "routing_proxy": True,
+                }
+            )
         )
-    )
-
-    assert any(w.code == "routing-proxy-with-internal-dp" for w in collect_warnings(spec))
 
 
-def test_external_dp_with_multiple_api_servers_warns():
-    spec = DeploymentSpec.model_validate(
-        _spec_with_role(
-            {
-                "name": "decode",
-                "lws": {"size": 4},
-                "parallelism": {"gpus_per_node": 4, "tp": 1, "dp": 16, "ep": True},
-                "dp_load_balancing": "external",
-                "vllm": {"api_server_count": 4},
-            }
+def test_external_dp_with_multiple_api_servers_is_an_error():
+    with pytest.raises(ValidationError, match="api_server_count > 1 is incompatible"):
+        DeploymentSpec.model_validate(
+            _spec_with_role(
+                {
+                    "name": "decode",
+                    "lws": {"size": 4},
+                    "parallelism": {"gpus_per_node": 4, "tp": 1, "dp": 16, "ep": True},
+                    "dp_load_balancing": "external",
+                    "vllm": {"api_server_count": 4},
+                }
+            )
         )
-    )
-
-    assert any(w.code == "api-server-count-with-external-dp" for w in collect_warnings(spec))
 
 
 def test_pd_topology_sets_decode_proxy_without_role_flag():

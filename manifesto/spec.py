@@ -12,6 +12,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from .cluster import Cluster
 from .images import apply_image_refs
 from .overrides import load_spec_data
+from .parallelism import parallel_layout
 
 
 class TopologyKind(StrEnum):
@@ -49,12 +50,21 @@ class ParallelismSpec(BaseModel):
     ep: bool = False
     gpus: int | None = Field(None, ge=1, validation_alias=AliasChoices("gpus", "gpus_per_node"))
 
+    @field_validator("dp")
+    @classmethod
+    def validate_dp(cls, value: int | bool | None) -> int | bool | None:
+        if value is True:
+            raise ValueError("dp: true is ambiguous; use a global size or false")
+        if isinstance(value, int) and not isinstance(value, bool) and value < 1:
+            raise ValueError("dp must be >= 1")
+        return value
+
     @property
     def dp_size(self) -> int:
         """Requested global data-parallel size; 1 means data parallelism is off."""
-        if self.dp is None or isinstance(self.dp, bool):
+        if self.dp is None or self.dp is False:
             return 1
-        return max(1, self.dp)
+        return self.dp
 
     @property
     def dp_enabled(self) -> bool:
@@ -184,6 +194,13 @@ class DeploymentSpec(BaseModel):
             decode.routing_proxy = True
             decode.serving_port_base = 8000
             decode.backend_port_base = 8200
+        for role in self.roles:
+            if role.routing_proxy and role.dp_load_balancing != DpLoadBalancing.EXTERNAL:
+                raise ValueError(f"{role.name}: routing_proxy requires dp_load_balancing: external")
+            if role.dp_load_balancing == DpLoadBalancing.EXTERNAL and _api_server_count(role.vllm_args) > 1:
+                raise ValueError(
+                    f"{role.name}: api_server_count > 1 is incompatible with external DP load balancing"
+                )
         return self
 
     def role(self, name: str) -> RoleSpec:
@@ -200,6 +217,15 @@ class DeploymentSpec(BaseModel):
                 role.parallelism.gpus = _infer_gpus_per_pod(role, cluster.gpus_per_node)
             if "gpus" not in role.resources.model_fields_set:
                 role.resources.gpus = role.gpus_per_pod
+            parallel_layout(role)
+
+
+def _api_server_count(vllm_args: dict[str, Any]) -> int:
+    value = vllm_args.get("api_server_count", vllm_args.get("api-server-count", 1))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 1
 
 
 def _infer_gpus_per_pod(role: RoleSpec, cluster_gpus_per_node: int) -> int:
@@ -211,9 +237,7 @@ def _infer_gpus_per_pod(role: RoleSpec, cluster_gpus_per_node: int) -> int:
 
     if parallelism.dp_enabled:
         return tp_local * max(1, parallelism.dp_size // role.lws.size)
-    if parallelism.dp is False:
-        return tp_local
-    return cluster_gpus_per_node
+    return tp_local
 
 
 def _safe_cache_key(value: str) -> str:

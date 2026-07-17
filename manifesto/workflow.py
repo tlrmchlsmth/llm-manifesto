@@ -14,7 +14,6 @@ from .cluster import load_cluster
 from .instance import Instance
 from .render import render, render_to_yaml
 from .spec import RoutingKind, load_spec
-from .warnings import collect_warnings
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,8 +133,6 @@ def render_manifest(args, config: RuntimeConfig, *, routing_only: bool = False) 
     cluster = load_runtime_cluster(config, args)
     spec = load_spec(args.spec, cluster)
     apply_runtime_overrides(spec, args, config)
-    for warning in collect_warnings(spec):
-        print(f"warning[{warning.code}]: {warning.message}", file=sys.stderr)
     return render_to_yaml(
         render(spec, user=config.user, cluster=cluster, routing_only=routing_only),
         header=manifest_header(args, config, routing_only=routing_only),

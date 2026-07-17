@@ -24,7 +24,7 @@ def test_compact_parallelism_and_equations_resolve_to_runtime_values():
 
     assert role.gpus_per_pod == 4
     assert role.parallelism.tp == 1
-    assert layout.dp_enabled is True
+    assert role.parallelism.dp_enabled is True
     assert layout.dp_local_size == 4
     assert role.parallelism.ep is True
     assert role.dp_load_balancing == DpLoadBalancing.EXTERNAL

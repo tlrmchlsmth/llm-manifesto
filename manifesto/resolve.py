@@ -27,8 +27,7 @@ class ResolvedRole:
 def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> ResolvedRole:
     layout = parallel_layout(role)
     ports = derive_ports(
-        data_parallel_enabled=layout.dp_enabled,
-        data_parallel_local_size=layout.dp_local_size if layout.dp_enabled else None,
+        rank_count=layout.dp_local_size,
         public_base=role.serving_port_base,
         backend_base=role.backend_port_base,
     )
@@ -78,7 +77,7 @@ def _variable_context(spec: DeploymentSpec, role: RoleSpec, layout: ParallelLayo
         "tp": layout.tp_world_size,
         "tp_world_size": layout.tp_world_size,
         "tp_local_size": layout.tp_local_size,
-        "dp_enabled": layout.dp_enabled,
+        "dp_enabled": role.parallelism.dp_enabled,
         "dp_local_size": layout.dp_local_size,
         "dp_world_size": layout.dp_world_size,
         "lws_size": role.lws.size,
