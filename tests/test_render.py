@@ -140,16 +140,38 @@ def test_dedicated_logging_pvc_is_mounted_when_configured():
 
 
 def test_no_dp_qwen_uses_single_port_and_no_dp_flags():
-    objects = _objects("qwen/aggregated.yaml")
-    lws = _find(objects, "LeaderWorkerSet", "decode")
-    container = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]
+    spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
+    spec.role("decode").lws.replicas = 2
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    deployment = _find(objects, "Deployment", "decode")
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
     script = container["args"][0]
     infpool = _find(objects, "InferencePool")
 
+    assert not any(obj["kind"] == "LeaderWorkerSet" for obj in objects)
+    assert deployment["spec"]["replicas"] == 2
+    assert deployment["spec"]["selector"]["matchLabels"] == {
+        "app.kubernetes.io/instance": "tester-qwen",
+        "llm-d.ai/role": "decode",
+    }
+    assert deployment["spec"]["template"]["metadata"]["labels"].items() >= deployment["spec"]["selector"][
+        "matchLabels"
+    ].items()
     assert [p["containerPort"] for p in container["ports"]] == [8000]
     assert "--data-parallel-size" not in script
     assert "startupProbe" not in container
     assert infpool["spec"]["targetPorts"] == [{"number": 8000}]
+
+
+def test_single_node_dp_uses_deployment_without_lws_environment():
+    spec = load_spec(ROOT / "models" / "qwen" / "h200-aggregated.yaml", CKS_H200)
+    objects = render(spec, user="tester", cluster=CKS_H200)
+    deployment = _find(objects, "Deployment", "decode")
+    script = deployment["spec"]["template"]["spec"]["containers"][0]["args"][0]
+
+    assert "LWS_" not in script
+    assert "START_RANK=0" in script
+    assert "--data-parallel-address 127.0.0.1" in script
 
 
 def test_pd_inferencepool_selector_includes_prefill_and_decode_roles():
@@ -221,8 +243,8 @@ def test_cks_h200_cluster_uses_coreweave_cache_and_rdma_settings():
     spec = load_spec(ROOT / "models" / "qwen" / "h200-aggregated.yaml", CKS_H200)
     assert spec.model.hf_home == "/var/cache/huggingface"
     objects = render(spec, user="tester", cluster=CKS_H200)
-    lws = _find(objects, "LeaderWorkerSet", "decode")
-    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+    deployment = _find(objects, "Deployment", "decode")
+    pod_spec = deployment["spec"]["template"]["spec"]
     container = pod_spec["containers"][0]
     script = container["args"][0]
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}

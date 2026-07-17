@@ -96,8 +96,11 @@ def build_launch_script(
         lines += [
             f"DP_SIZE_LOCAL={layout.dp_local_size}",
             f"DP_SIZE={layout.dp_world_size}",
-            "START_RANK=$(( ${LWS_WORKER_INDEX:-0} * DP_SIZE_LOCAL ))",
         ]
+        if role.lws.size > 1:
+            lines.append("START_RANK=$(( LWS_WORKER_INDEX * DP_SIZE_LOCAL ))")
+        else:
+            lines.append("START_RANK=0")
     else:
         lines += ["DP_SIZE_LOCAL=1", "START_RANK=0"]
 
@@ -113,21 +116,23 @@ def build_launch_script(
     if role.expert_parallel.enabled:
         base_args.append("--enable-expert-parallel")
     if external_dp:
+        dp_address = "${LWS_LEADER_ADDRESS}" if role.lws.size > 1 else "127.0.0.1"
         base_args += [
             ["--data-parallel-size", "$DP_SIZE"],
             ["--data-parallel-start-rank", "$START_RANK"],
             ["--data-parallel-size-local", "$DP_SIZE_LOCAL"],
-            ["--data-parallel-address", "${LWS_LEADER_ADDRESS}"],
+            ["--data-parallel-address", dp_address],
             ["--data-parallel-rpc-port", "5555"],
             "--data-parallel-multi-port-external-lb",
             ["--data-parallel-supervisor-port", "8100"],
         ]
     elif role.data_parallel.enabled:
+        dp_address = "${LWS_LEADER_ADDRESS}" if role.lws.size > 1 else "127.0.0.1"
         base_args += [
             ["--data-parallel-size", "$DP_SIZE"],
             ["--data-parallel-rank", "$RANK"],
             ["--data-parallel-size-local", "1"],
-            ["--data-parallel-address", "${LWS_LEADER_ADDRESS}"],
+            ["--data-parallel-address", dp_address],
             ["--data-parallel-rpc-port", "5555"],
         ]
     if role.kv_transfer_config:

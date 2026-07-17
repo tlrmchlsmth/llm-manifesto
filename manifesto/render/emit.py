@@ -7,7 +7,7 @@ import io
 import yaml
 
 from .base import render_dcgm_metrics_configmap, render_service_account
-from .lws import render_lws
+from .lws import render_workload
 from .routing import render_routing
 from ..cluster import Cluster
 from ..instance import Instance
@@ -44,7 +44,7 @@ def render(spec: DeploymentSpec, *, user: str, cluster: Cluster, routing_only: b
     if any("dcgm-exporter" in spec.runtime.sidecars for _role in spec.roles):
         objects.append(render_dcgm_metrics_configmap(instance))
     for role in spec.roles:
-        objects.append(render_lws(spec, instance, cluster, role))
+        objects.append(render_workload(spec, instance, cluster, role))
     objects.extend(render_routing(spec, instance, cluster))
     return objects
 

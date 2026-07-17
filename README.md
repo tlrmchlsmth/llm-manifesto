@@ -18,7 +18,7 @@ Manifesto takes two YAML inputs:
 
 It emits raw Kubernetes manifests:
 
-- LeaderWorkerSet model-server workloads
+- Deployment or LeaderWorkerSet model-server workloads, depending on node count
 - InferencePool and endpoint picker deployment
 - Gateway API and HTTPRoute objects
 - per-pod monitoring sidecars
@@ -132,11 +132,13 @@ roles:
 ```
 
 `tp` and `dp` are global sizes. Local DP, port fanout, and per-pod launch
-arguments are derived from the LWS size and GPUs per pod.
+arguments are derived from the workload size and GPUs per pod. Single-node
+roles render as Kubernetes Deployments; roles spanning multiple nodes render as
+LeaderWorkerSets.
 
-`workload_name` is optional. When set, it controls the LeaderWorkerSet name and
-therefore the Kubernetes pod name prefix, while full release-specific instance
-labels still scope routing and selectors.
+`workload_name` is optional. When set, it controls the Deployment or
+LeaderWorkerSet name and therefore the Kubernetes pod name prefix, while full
+release-specific instance labels still scope routing and selectors.
 
 Image versions are centralized in `config/images.yaml`. Model specs should use
 `model.image_ref`, with `vllm.standard` as the shared vLLM image reference,
