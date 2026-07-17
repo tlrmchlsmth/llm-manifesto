@@ -49,7 +49,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
         release=instance.release_slug,
         gpu_arch=spec.cache.gpu_arch,
         cuda=spec.cache.cuda,
-        vllm_version=spec.cache.vllm_version,
+        cache_key=spec.cache_key,
     )
     dev_venv = spec.runtime.dev_venv or (
         cluster.dev_venv(user=instance.user_slug, release=instance.release_slug) if spec.runtime.dev else ""

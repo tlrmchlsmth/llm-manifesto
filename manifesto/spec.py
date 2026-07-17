@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -130,7 +131,7 @@ class RoutingSpec(BaseModel):
 class CacheSpec(BaseModel):
     gpu_arch: str = "gb200"
     cuda: str = "cu13"
-    vllm_version: str = "dev"
+    key: str | None = None
 
 
 class DeploymentSpec(BaseModel):
@@ -145,6 +146,18 @@ class DeploymentSpec(BaseModel):
     runtime: RuntimeSpec = Field(default_factory=RuntimeSpec)
     cache: CacheSpec = Field(default_factory=CacheSpec)
     vars: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def cache_key(self) -> str:
+        if self.cache.key:
+            return _safe_cache_key(self.cache.key)
+        image = self.model.image
+        if "@" in image:
+            identity = image.rsplit("@", 1)[1]
+        else:
+            image_name = image.rsplit("/", 1)[-1]
+            identity = image_name.rsplit(":", 1)[1] if ":" in image_name else "latest"
+        return _safe_cache_key(identity)
 
     @field_validator("roles")
     @classmethod
@@ -173,6 +186,10 @@ class DeploymentSpec(BaseModel):
             if role.name == name:
                 return role
         raise KeyError(f"unknown role: {name}")
+
+
+def _safe_cache_key(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "latest"
 
 
 def load_spec(path: str | Path, cluster: Cluster | None = None) -> DeploymentSpec:

@@ -56,7 +56,7 @@ class Cluster:
     log_root_template: str = "/mnt/shared/{user}/logs"
     logging_pvc: str | None = None
     logging_mount_path: str = "/mnt/logs"
-    cache_root_template: str = "/mnt/shared/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}"
+    cache_root_template: str = "/mnt/shared/{user}/jit-cache/{gpu_arch}/{cuda}/{cache_key}/{release}"
     dev_venv_template: str = "/mnt/shared/{user}/vllm-venv"
     dev_source_template: str = "/mnt/shared/{user}/vllm-dev"
     images: ImageCatalog = DEFAULT_IMAGES
@@ -121,14 +121,14 @@ class Cluster:
     def log_root(self, *, user: str, release: str) -> str:
         return self._format_path(self.log_root_template, user=user, release=release)
 
-    def cache_root(self, *, user: str, release: str, gpu_arch: str, cuda: str, vllm_version: str) -> str:
+    def cache_root(self, *, user: str, release: str, gpu_arch: str, cuda: str, cache_key: str) -> str:
         return self._format_path(
             self.cache_root_template,
             user=user,
             release=release,
             gpu_arch=gpu_arch,
             cuda=cuda,
-            vllm_version=vllm_version,
+            cache_key=cache_key,
         )
 
     def dev_venv(self, *, user: str, release: str) -> str:
@@ -233,7 +233,7 @@ def load_cluster(path: str | Path) -> Cluster:
         logging_mount_path=logging.get("mount_path", "/mnt/logs"),
         cache_root_template=paths.get(
             "cache_root",
-            f"{shared_mount_path}/{{user}}/jit-cache/{{gpu_arch}}/{{cuda}}/{{vllm_version}}/{{release}}",
+            f"{shared_mount_path}/{{user}}/jit-cache/{{gpu_arch}}/{{cuda}}/{{cache_key}}/{{release}}",
         ),
         dev_venv_template=dev.get("venv", f"{shared_mount_path}/{{user}}/vllm-venv"),
         dev_source_template=dev.get("source", f"{shared_mount_path}/{{user}}/vllm-dev"),

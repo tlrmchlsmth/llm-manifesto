@@ -259,7 +259,7 @@ def _cache_path(args: argparse.Namespace) -> int:
             release=instance.release_slug,
             gpu_arch=spec.cache.gpu_arch,
             cuda=spec.cache.cuda,
-            vllm_version=spec.cache.vllm_version,
+            cache_key=spec.cache_key,
         )
     )
     return 0

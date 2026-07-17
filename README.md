@@ -210,6 +210,14 @@ storage:
 `persistentVolumeClaim`, `hostPath`, `csi`, `nfs`, or `emptyDir`. Profiles
 backed by separate host-local cache volumes can omit it entirely.
 
+Compiled-cache paths derive their cache key from the resolved model image tag
+or digest. Custom and dev builds can force a fresh namespace explicitly:
+
+```yaml
+cache:
+  key: dev-build-42
+```
+
 Model-server stdout/stderr is persisted by the generated launch script. Configure
 the backing PVC and root path in the cluster profile:
 

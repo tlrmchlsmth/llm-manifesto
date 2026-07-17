@@ -19,7 +19,7 @@ pod_defaults:
 
 paths:
   user_root: /mnt/lustre/{user}
-  cache_root: /mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}
+  cache_root: /mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{cache_key}/{release}
 
 dev:
   venv: /mnt/lustre/{user}/vllm-venv
