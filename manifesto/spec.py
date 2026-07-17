@@ -211,7 +211,7 @@ class DeploymentSpec(BaseModel):
 
     def apply_cluster_defaults(self, cluster: Cluster) -> None:
         if self.model.hf_home is None:
-            self.model.hf_home = cluster.hf_home
+            self.model.hf_home = cluster.cache.hf_home
         for role in self.roles:
             if role.parallelism.gpus is None:
                 role.parallelism.gpus = _infer_gpus_per_pod(role, cluster.gpus_per_node)

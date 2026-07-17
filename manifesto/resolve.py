@@ -102,11 +102,11 @@ def _base_env(spec: DeploymentSpec, cache_prefix: str, *, dev_venv: str) -> dict
 
 
 def _resource_claims(cluster: Cluster, fabric_profile: str) -> list[dict[str, str]]:
-    if cluster.imex_resource_claim_template and fabric_profile.startswith("deepep"):
+    if cluster.fabric.imex_resource_claim_template and fabric_profile.startswith("deepep"):
         return [
             {
                 "name": "compute-domain-channel",
-                "resourceClaimTemplateName": cluster.imex_resource_claim_template,
+                "resourceClaimTemplateName": cluster.fabric.imex_resource_claim_template,
             }
         ]
     return []

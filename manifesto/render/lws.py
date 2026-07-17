@@ -19,7 +19,6 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     containers, extra_volumes = sidecars(
         spec.runtime.sidecars,
         dcgm_config_name=instance.name("dcgm-metrics"),
-        images=cluster.images,
     )
     volumes = cluster.base_volumes()
     if role.shm_size:
@@ -122,9 +121,9 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
             "timeoutSeconds": 5,
             "failureThreshold": 1800,
         }
-    if cluster.rdma_resource_name:
+    if cluster.rdma.resource_name:
         for resources in ("requests", "limits"):
-            vllm_container["resources"][resources][cluster.rdma_resource_name] = cluster.rdma_resource_value
+            vllm_container["resources"][resources][cluster.rdma.resource_name] = cluster.rdma.value
     if resolved.resource_claims:
         vllm_container["resources"]["claims"] = [{"name": claim["name"]} for claim in resolved.resource_claims]
 
