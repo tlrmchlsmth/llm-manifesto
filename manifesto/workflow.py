@@ -13,7 +13,7 @@ from pathlib import Path
 from .cluster import load_cluster
 from .instance import Instance
 from .render import render, render_to_yaml
-from .spec import load_spec
+from .spec import RoutingKind, load_spec
 from .warnings import collect_warnings
 
 
@@ -38,7 +38,7 @@ class RuntimeConfig:
     @classmethod
     def from_args(cls, args, *, require_cluster: bool = True) -> "RuntimeConfig":
         load_dotenv()
-        user = getattr(args, "user", None) or os.environ.get("USER") or "dev"
+        user = resolve_user(getattr(args, "user", None))
         namespace = resolve_namespace(getattr(args, "namespace", None))
         cluster_path = resolve_cluster(getattr(args, "cluster", None)) if require_cluster else getattr(args, "cluster", None)
         render_out = Path(
@@ -67,6 +67,10 @@ def load_dotenv(path: Path = ROOT / ".env") -> None:
         value = value.strip().strip("'\"")
         if key and key not in os.environ:
             os.environ[key] = value
+
+
+def resolve_user(explicit: str | None = None) -> str:
+    return explicit or os.environ.get("USER") or "dev"
 
 
 def resolve_namespace(explicit: str | None = None) -> str:
@@ -104,8 +108,13 @@ def resolve_cluster(explicit: str | None = None) -> str:
 def load_runtime_cluster(config: RuntimeConfig, args):
     if not config.cluster_path:
         raise WorkflowError("No cluster profile configured.", code=2)
-    return load_cluster(config.cluster_path).with_path_overrides(
+    return load_cluster_with_overrides(config.cluster_path, args)
+
+
+def load_cluster_with_overrides(cluster_path: str, args):
+    return load_cluster(cluster_path).with_path_overrides(
         user_root=getattr(args, "user_root", None),
+        log_root=getattr(args, "log_root", None),
         cache_root=getattr(args, "cache_root", None),
         dev_venv=getattr(args, "dev_venv", None),
         dev_source=getattr(args, "dev_source", None),
@@ -149,7 +158,7 @@ def manifest_header(args, config: RuntimeConfig, *, routing_only: bool) -> list[
     ]
     if getattr(args, "dev", False):
         command.append("--dev")
-    for name in ("user_root", "cache_root", "dev_venv", "dev_source"):
+    for name in ("user_root", "log_root", "cache_root", "dev_venv", "dev_source"):
         value = getattr(args, name, None)
         if value:
             command.extend([f"--{name.replace('_', '-')}", value])
@@ -204,23 +213,35 @@ def delete_file(args) -> int:
 
 
 def ready(args) -> int:
-    config = RuntimeConfig.from_args(args)
+    config = RuntimeConfig.from_args(args, require_cluster=False)
     spec = load_spec(args.spec)
     instance = Instance(user=config.user, release=spec.release)
-    selector = f"app.kubernetes.io/instance={instance.instance_id}"
     epp = instance.name("infpool-epp")
     gateway = instance.name("inference-gateway-istio")
+    routing_enabled = spec.routing.kind != RoutingKind.DISABLED
 
     print("Waiting for model pods and endpoint picker...")
     waits = [
-        [*config.kubectl(), "wait", "--for=condition=Ready", "pod", "-l", f"{selector},llm-d.ai/role=decode", "--timeout=1200s"],
-        [*config.kubectl(), "wait", "--for=condition=Ready", "pod", "-l", f"{selector},llm-d.ai/role=prefill", "--timeout=1200s"],
-        [*config.kubectl(), "wait", "--for=condition=Available", f"deploy/{epp}", "--timeout=120s"],
+        [
+            *config.kubectl(),
+            "wait",
+            "--for=condition=Ready",
+            "pod",
+            "-l",
+            ",".join(f"{key}={value}" for key, value in instance.pod_selector(role.name).items()),
+            "--timeout=1200s",
+        ]
+        for role in spec.roles
     ]
+    if routing_enabled:
+        waits.append([*config.kubectl(), "wait", "--for=condition=Available", f"deploy/{epp}", "--timeout=120s"])
     procs = [subprocess.Popen(cmd) for cmd in waits]
     rc = max(proc.wait() for proc in procs)
     if rc:
         return rc
+    if not routing_enabled:
+        print("Ready.")
+        return 0
 
     print("Checking gateway...")
     url = f"http://{gateway}:80/v1/models"
@@ -247,7 +268,12 @@ def run(cmd: list[str], *, input_text: str | None = None) -> int:
 
 
 def capture(cmd: list[str], *, check: bool = True) -> str:
-    proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        if check:
+            raise WorkflowError(f"command not found: {cmd[0]}")
+        return ""
     if check and proc.returncode != 0:
         raise WorkflowError(proc.stderr.strip() or f"command failed ({proc.returncode}): {shlex.join(cmd)}")
     return proc.stdout

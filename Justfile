@@ -15,101 +15,41 @@ DEV_POD_NAME := NAME_PREFIX + "-vllm-dev"
 DEV_DIR := "dev"
 MONITORING_DIR := "monitoring"
 RENDER_OUT := env("MANIFESTO_RENDER_OUT", "/tmp/" + NAME_PREFIX + "-manifesto.yaml")
-EDITOR := env("EDITOR", "vi")
 
 default:
   just --list
 
-# === v2 spec-based renderer ===
-
-@_cluster:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  CLUSTER="${MANIFESTO_CLUSTER:-}"
-  if [ -z "$CLUSTER" ] && [ -z "${MANIFESTO_CLUSTER_MAP:-}" ]; then
-    echo "MANIFESTO_CLUSTER is required, or set MANIFESTO_CLUSTER_MAP in .env." >&2
-    exit 2
-  fi
-  if [ -z "$CLUSTER" ]; then
-    context=$(kubectl config current-context)
-    cluster=$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')
-    IFS=',' read -ra entries <<< "${MANIFESTO_CLUSTER_MAP:-}"
-    for entry in "${entries[@]}"; do
-      key="${entry%%=*}"
-      value="${entry#*=}"
-      if [ "$key" = "$context" ] || [ "$key" = "$cluster" ]; then
-        CLUSTER="$value"
-        break
-      fi
-    done
-  fi
-  if [ -z "$CLUSTER" ]; then
-    echo "No cluster mapping found for current kube context or cluster. Set MANIFESTO_CLUSTER, or add it to MANIFESTO_CLUSTER_MAP in .env." >&2
-    exit 2
-  fi
-  echo "$CLUSTER"
+# === Spec-based renderer (thin wrappers over the manifesto CLI) ===
 
 render SPEC *ARGS='':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
+  uv run manifesto render {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 render-file SPEC *ARGS='':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}} > "{{RENDER_OUT}}"
-  echo "{{RENDER_OUT}}"
+  uv run manifesto render-file {{SPEC}} --output "{{RENDER_OUT}}" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 edit-file SPEC *ARGS='':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  just render-file {{SPEC}} {{ARGS}}
-  "{{EDITOR}}" "{{RENDER_OUT}}"
+  uv run manifesto edit-file {{SPEC}} --output "{{RENDER_OUT}}" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 diff-file FILE=RENDER_OUT:
-  {{KN}} diff -f "{{FILE}}"
+  uv run manifesto diff --namespace {{NAMESPACE}} --output "{{FILE}}"
 
 apply-file FILE=RENDER_OUT:
-  {{KN}} apply -f "{{FILE}}"
+  uv run manifesto apply --namespace {{NAMESPACE}} --output "{{FILE}}"
 
 delete-file FILE=RENDER_OUT NOW='false':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  FORCE=""
-  if [ "{{NOW}}" = "true" ]; then
-    FORCE="--grace-period=0 --force"
-  fi
-  {{KN}} delete -f "{{FILE}}" --ignore-not-found=true $FORCE
+  uv run manifesto delete --namespace {{NAMESPACE}} --output "{{FILE}}" {{ if NOW == 'true' { '--now' } else { '' } }}
 
 render-routing SPEC *ARGS='':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  uv run manifesto render-routing {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
+  uv run manifesto render-routing {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 start SPEC *ARGS='':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
+  uv run manifesto deploy {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 deploy-routing SPEC *ARGS='':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  uv run manifesto render-routing {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}} | {{KN}} apply -f -
+  uv run manifesto deploy-routing {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
 stop SPEC NOW='false':
-  #!/usr/bin/env bash
-  set -euo pipefail
-  FORCE=""
-  if [ "{{NOW}}" = "true" ]; then
-    FORCE="--grace-period=0 --force"
-  fi
-  CLUSTER="$(just --quiet _cluster)"
-  uv run manifesto render {{SPEC}} --cluster "$CLUSTER" --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} | {{KN}} delete -f - --ignore-not-found=true $FORCE
+  uv run manifesto stop {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ if NOW == 'true' { '--now' } else { '' } }}
 
 restart SPEC *ARGS='':
   #!/usr/bin/env bash
@@ -121,31 +61,14 @@ restart SPEC *ARGS='':
   {{KN}} wait --for=delete pod -l app.kubernetes.io/instance=$INSTANCE --timeout=60s 2>/dev/null || true
   just start {{SPEC}} {{ARGS}}
 
-# Wait for the v2-rendered stack to be ready.
+# Wait for the rendered stack to be ready.
 ready SPEC:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  INSTANCE=$(uv run manifesto instance-id {{SPEC}} --user {{NAME_PREFIX}})
-  EPP=$(uv run manifesto name {{SPEC}} infpool-epp --user {{NAME_PREFIX}})
-  GATEWAY_SVC=$(uv run manifesto name {{SPEC}} inference-gateway-istio --user {{NAME_PREFIX}})
-  {{KN}} wait --for=condition=Ready pod -l app.kubernetes.io/instance=$INSTANCE,llm-d.ai/role=decode --timeout=1200s &
-  ({{KN}} wait --for=condition=Ready pod -l app.kubernetes.io/instance=$INSTANCE,llm-d.ai/role=prefill --timeout=1200s 2>/dev/null || true) &
-  {{KN}} wait --for=condition=Available deploy/$EPP --timeout=120s &
-  echo "Waiting for v2 model pods and EPP..."
-  wait
-  echo "Checking gateway..."
-  until curl -sf --max-time 5 http://$GATEWAY_SVC:80/v1/models 2>/dev/null | grep -q '"id"' || \
-    {{KN}} exec deploy/$EPP -- curl -sf --max-time 5 http://$GATEWAY_SVC:80/v1/models 2>/dev/null | grep -q '"id"'
-  do
-    sleep 2
-  done
-  echo "Ready."
+  uv run manifesto ready {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}}
 
 flush-cache SPEC *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  CACHE_PATH=$(uv run manifesto cache-path {{SPEC}} --cluster "$CLUSTER" --user {{NAME_PREFIX}} {{ARGS}})
+  CACHE_PATH=$(uv run manifesto cache-path {{SPEC}} --user {{NAME_PREFIX}} {{ARGS}})
   {{KN}} exec {{DEV_POD_NAME}} -- bash -c "rm -rf '$CACHE_PATH' && echo 'Compile cache flushed: $CACHE_PATH'"
 
 @print-gpus:
@@ -207,8 +130,7 @@ IMAGE_CATALOG := "config/images.yaml"
 logs SPEC ROLE='decode' *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  LOG_DIR=$(uv run manifesto log-path {{SPEC}} --cluster "$CLUSTER" --user {{NAME_PREFIX}} --role {{ROLE}})
+  LOG_DIR=$(uv run manifesto log-path {{SPEC}} --user {{NAME_PREFIX}} --role {{ROLE}})
   if [[ "{{ARGS}}" == *"-f"* ]]; then
     # Follow the latest log file
     LATEST=$({{KN}} exec {{DEV_POD_NAME}} -- bash -c "ls -t $LOG_DIR/*.log 2>/dev/null | head -1")
@@ -229,8 +151,7 @@ logs SPEC ROLE='decode' *ARGS='':
 logs-clean SPEC ROLE='decode' KEEP='5':
   #!/usr/bin/env bash
   set -euo pipefail
-  CLUSTER="$(just --quiet _cluster)"
-  LOG_DIR=$(uv run manifesto log-path {{SPEC}} --cluster "$CLUSTER" --user {{NAME_PREFIX}} --role {{ROLE}})
+  LOG_DIR=$(uv run manifesto log-path {{SPEC}} --user {{NAME_PREFIX}} --role {{ROLE}})
   {{KN}} exec {{DEV_POD_NAME}} -- bash -c "
     cd $LOG_DIR 2>/dev/null || { echo 'No logs directory'; exit 0; }
     FILES=(\$(ls -t *.log 2>/dev/null))
