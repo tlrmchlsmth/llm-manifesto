@@ -120,6 +120,23 @@ def test_shared_storage_accepts_non_pvc_volume_sources():
     assert volume == {"name": "shared-storage", "emptyDir": {}}
 
 
+def test_gateway_class_comes_from_cluster_profile():
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.gateway.class_name = "platform-gateway"
+    spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
+    objects = render(spec, user="tester", cluster=cluster)
+    gateway = _find(objects, "Gateway")
+    gateway_options = _find(objects, "ConfigMap", "gateway-options")
+
+    assert gateway["spec"]["gatewayClassName"] == "platform-gateway"
+    assert len(f"{gateway['metadata']['name']}-platform-gateway") <= 63
+    assert not any(
+        obj["kind"] == "Service" and obj["metadata"]["name"].startswith(gateway["metadata"]["name"])
+        for obj in objects
+    )
+    assert yaml.safe_load(gateway_options["data"]["service"])["spec"]["type"] == "ClusterIP"
+
+
 def test_dedicated_logging_pvc_is_mounted_when_configured():
     cluster = CLUSTER.model_copy(deep=True)
     cluster.logging.pvc = "logs-pvc"

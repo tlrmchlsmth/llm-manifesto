@@ -1,6 +1,5 @@
 """UX-level tests for compact YAML syntax, equations, and generated manifests."""
 
-from dataclasses import replace
 from pathlib import Path
 
 from manifesto.cluster import load_cluster
@@ -157,9 +156,21 @@ def test_cluster_path_templates_feed_cache_dev_and_logs():
 
     assert resolved.env["VLLM_DEV_VENV"] == "/venvs/tester-name/wide-ep-1p-ep8-1d-ep8"
     assert resolved.env["VLLM_CACHE_ROOT"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/vllm"
+    assert resolved.env["HOME"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/home"
+    assert "USER" not in resolved.env
+    assert resolved.env["TRITON_CACHE_DIR"].endswith("/v0.25.1/triton")
+    assert resolved.env["TORCHINDUCTOR_CACHE_DIR"].endswith("/v0.25.1/torchinductor")
     assert "LOG_DIR=/logs/tester-name/wide-ep-1p-ep8-1d-ep8/decode" in script
     assert "find /src/tester-name/vllm" in script
     assert "ucx-lib" not in script
+
+
+def test_openshift_cluster_sets_stable_user_for_arbitrary_uid():
+    cluster = CLUSTER.model_copy(update={"platform": "openshift"})
+    spec = load_spec(DEEPSEEK, cluster)
+    resolved = resolve_role(spec, Instance("tester", spec.release), cluster, spec.role("decode"))
+
+    assert resolved.env["USER"] == "vllm"
 
 
 def test_pre_launch_hooks_run_before_rank_launch_setup():

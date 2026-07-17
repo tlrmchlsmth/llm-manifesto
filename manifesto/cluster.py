@@ -8,7 +8,7 @@ falling back to defaults.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -74,6 +74,13 @@ class PodDefaults(BaseModel):
     shm_size: str = "2Gi"
 
 
+class GatewayConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    class_name: str = "istio"
+    service_type: str = "ClusterIP"
+
+
 class FabricProfileConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -121,6 +128,8 @@ class Cluster(BaseModel):
 
     name: str
     gpus_per_node: int = Field(ge=1)
+    platform: Literal["kubernetes", "openshift"] = "kubernetes"
+    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     dev: DevConfig = Field(default_factory=DevConfig)
