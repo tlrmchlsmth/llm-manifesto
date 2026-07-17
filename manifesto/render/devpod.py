@@ -82,8 +82,8 @@ def render_dev_pod(cluster: Cluster, user: str) -> dict:
                     "imagePullPolicy": "Always",
                     "command": ["sleep", "infinity"],
                     "resources": {
-                        "requests": {"cpu": "32", "memory": "512Gi", "nvidia.com/gpu": "2"},
-                        "limits": {"cpu": "32", "memory": "512Gi", "nvidia.com/gpu": "2"},
+                        "requests": {"cpu": "32", "memory": "512Gi", "nvidia.com/gpu": "1"},
+                        "limits": {"cpu": "32", "memory": "512Gi", "nvidia.com/gpu": "1"},
                     },
                     "env": [secret_env("HF_TOKEN", "hf-secret", "HF_TOKEN"), *env_list(env)],
                     "volumeMounts": mounts,
