@@ -33,7 +33,7 @@ The repository contains:
 Manifesto takes a model spec and a cluster profile, then emits raw Kubernetes
 objects:
 
-- LeaderWorkerSet model-server workloads.
+- Deployment or LeaderWorkerSet model-server workloads, depending on node count.
 - InferencePool and endpoint picker deployment.
 - Gateway API and HTTPRoute objects.
 - Per-pod monitoring sidecars.

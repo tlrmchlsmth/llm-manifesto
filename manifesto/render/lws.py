@@ -1,4 +1,4 @@
-"""LeaderWorkerSet renderer for vLLM roles, including sidecars and fabric mounts."""
+"""Workload renderer for vLLM roles, including sidecars and fabric mounts."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from ..resolve import resolve_role
 from ..spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 
-def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
+def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
     resolved = resolve_role(spec, instance, cluster, role)
     external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
-    lws_name = instance.user_scoped_name(role.workload_name) if role.workload_name else instance.name(role.name)
+    workload_name = instance.user_scoped_name(role.workload_name) if role.workload_name else instance.name(role.name)
 
     containers, extra_volumes = sidecars(
         spec.runtime.sidecars,
@@ -145,11 +145,34 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
     if resolved.resource_claims:
         pod_spec["resourceClaims"] = resolved.resource_claims
 
+    if role.lws.size == 1:
+        selector = instance.pod_selector(role.name)
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": workload_name,
+                "labels": instance.labels("model-server", role.name),
+            },
+            "spec": {
+                "replicas": role.lws.replicas,
+                "selector": {"matchLabels": selector},
+                "strategy": {
+                    "type": "RollingUpdate",
+                    "rollingUpdate": {"maxSurge": 0, "maxUnavailable": "100%"},
+                },
+                "template": {
+                    "metadata": {"labels": pod_labels},
+                    "spec": pod_spec,
+                },
+            },
+        }
+
     return {
         "apiVersion": "leaderworkerset.x-k8s.io/v1",
         "kind": "LeaderWorkerSet",
         "metadata": {
-            "name": lws_name,
+            "name": workload_name,
             "labels": instance.labels("lws", role.name)
             | {
                 "llm-d.ai/inferenceServing": "true",
