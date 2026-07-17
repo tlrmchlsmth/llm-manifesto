@@ -32,7 +32,7 @@ class DpLoadBalancing(StrEnum):
 
 
 # GPU count assumed when a spec is loaded without a cluster profile to infer from.
-DEFAULT_GPUS_PER_POD = 4
+DEFAULT_GPUS_PER_POD = 8
 
 
 class LwsSpec(BaseModel):
@@ -76,7 +76,7 @@ class ResourceSpec(BaseModel):
 
     cpu: str = "32"
     memory: str = "512Gi"
-    gpus: int = Field(4, ge=0)
+    gpus: int = Field(DEFAULT_GPUS_PER_POD, ge=0)
     ephemeral_storage: str = "128Gi"
 
 
