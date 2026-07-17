@@ -9,10 +9,8 @@ GH_TOKEN := "$GH_TOKEN"
 KN := "kubectl -n " + NAMESPACE
 
 NAME_PREFIX := env("USER", "dev")
-DEPLOY_NAME := NAME_PREFIX + "-wide-ep"
 DEV_POD_NAME := NAME_PREFIX + "-vllm-dev"
 
-DEV_DIR := "dev"
 MONITORING_DIR := "monitoring"
 RENDER_OUT := env("MANIFESTO_RENDER_OUT", "/tmp/" + NAME_PREFIX + "-manifesto.yaml")
 
@@ -117,12 +115,9 @@ get-decode-pods:
   echo "Decode pods:"
   cat .tmp/decode_pods.txt
 
-VLLM_DEV_VENV := "/mnt/lustre/" + NAME_PREFIX + "/vllm-venv"
-VLLM_DEV_SRC := "/mnt/lustre/" + NAME_PREFIX + "/vllm-dev"
 VLLM_DEV_REMOTE := "https://github.com/vllm-project/vllm.git"
 VLLM_DEV_BRANCH := "main"
 VLLM_BUILD_JOBS := "16"
-IMAGE_CATALOG := "config/images.yaml"
 
 # Show persisted model-server logs (survives LWS pod recreation when backed by shared storage)
 # Usage: just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode
@@ -168,31 +163,34 @@ logs-clean SPEC ROLE='decode' KEEP='5':
 
 # === Dev Environment ===
 
-# Deploy the persistent dev pod (CPU-only, for editing/compiling vLLM on Lustre)
+# Deploy the persistent dev pod (on a GPU node, for editing/compiling vLLM on shared storage)
 dev-start:
-  VLLM_DEV_IMAGE=$(python3 -c 'import yaml; print(yaml.safe_load(open("{{IMAGE_CATALOG}}"))["dev"]["image"])') envsubst < {{DEV_DIR}}/dev-pod.yaml | {{KN}} apply -f -
+  uv run manifesto render-dev-pod --user {{NAME_PREFIX}} | {{KN}} apply -f -
   {{KN}} wait --for=condition=Ready pod/{{DEV_POD_NAME}} --timeout=300s
 
 # Exec into the dev pod
 dev:
   {{KN}} exec -it {{DEV_POD_NAME}} -- /bin/zsh
 
-# Build vLLM from source on Lustre (runs in background, survives disconnects)
+# Build vLLM from source on shared storage (runs in background, survives disconnects)
 dev-build REMOTE=VLLM_DEV_REMOTE BRANCH=VLLM_DEV_BRANCH JOBS=VLLM_BUILD_JOBS:
   #!/usr/bin/env bash
   set -euo pipefail
-  {{KN}} exec -i {{DEV_POD_NAME}} -- bash <<'EOF'
+  DEV_VENV=$(uv run manifesto dev-path venv --user {{NAME_PREFIX}})
+  DEV_SRC=$(uv run manifesto dev-path source --user {{NAME_PREFIX}})
+  USER_ROOT=$(uv run manifesto dev-path user-root --user {{NAME_PREFIX}})
+  {{KN}} exec -i {{DEV_POD_NAME}} -- bash <<EOF
   set -euo pipefail
 
   # ensure venv python points to /usr/bin/python3.12 (works in both dev and runtime images)
-  VENV_PYTHON="{{VLLM_DEV_VENV}}/bin/python"
-  if [ "$(readlink "$VENV_PYTHON")" != "/usr/bin/python3.12" ]; then
-    echo "Repointing venv python: $(readlink "$VENV_PYTHON") -> /usr/bin/python3.12"
-    ln -sf /usr/bin/python3.12 "$VENV_PYTHON"
+  VENV_PYTHON="$DEV_VENV/bin/python"
+  if [ "\$(readlink "\$VENV_PYTHON")" != "/usr/bin/python3.12" ]; then
+    echo "Repointing venv python: \$(readlink "\$VENV_PYTHON") -> /usr/bin/python3.12"
+    ln -sf /usr/bin/python3.12 "\$VENV_PYTHON"
   fi
 
-  source {{VLLM_DEV_VENV}}/bin/activate
-  cd {{VLLM_DEV_SRC}}
+  source "$DEV_VENV/bin/activate"
+  cd "$DEV_SRC"
 
   # fetch and reset to requested branch
   git remote set-url origin {{REMOTE}}
@@ -200,37 +198,42 @@ dev-build REMOTE=VLLM_DEV_REMOTE BRANCH=VLLM_DEV_BRANCH JOBS=VLLM_BUILD_JOBS:
   git checkout {{BRANCH}}
   git reset --hard origin/{{BRANCH}}
 
-  # Flush stale JIT/compile caches (AOT graphs, flashinfer kernels, FA cute DSL)
-  for d in vllm_cache_extdp flashinfer_cache_extdp fa_cute_dsl_cache; do
-    [ -d "/mnt/lustre/{{NAME_PREFIX}}/$d" ] && mv "/mnt/lustre/{{NAME_PREFIX}}/$d" "/mnt/lustre/{{NAME_PREFIX}}/${d}.old.$(date +%s)" && echo "Flushed $d"
-  done
+  # Flush JIT/compile caches invalidated by the rebuild
+  if [ -d "$USER_ROOT/jit-cache" ]; then
+    mv "$USER_ROOT/jit-cache" "$USER_ROOT/jit-cache.old.\$(date +%s)" && echo "Flushed jit-cache"
+  fi
 
   # Find the merge-base with upstream main for precompiled C++ extensions
   git remote add upstream https://github.com/vllm-project/vllm.git 2>/dev/null || true
   git fetch upstream main --no-tags 2>/dev/null
-  PRECOMPILED_COMMIT=$(git merge-base HEAD upstream/main 2>/dev/null || git rev-parse HEAD)
-  echo "Precompiled wheel commit: ${PRECOMPILED_COMMIT:0:12}"
+  PRECOMPILED_COMMIT=\$(git merge-base HEAD upstream/main 2>/dev/null || git rev-parse HEAD)
+  echo "Precompiled wheel commit: \${PRECOMPILED_COMMIT:0:12}"
 
   # build in background
   VLLM_USE_PRECOMPILED=1 \
-  VLLM_PRECOMPILED_WHEEL_COMMIT=$PRECOMPILED_COMMIT \
+  VLLM_PRECOMPILED_WHEEL_COMMIT=\$PRECOMPILED_COMMIT \
   VLLM_PRECOMPILED_WHEEL_VARIANT="" \
   MAX_JOBS={{JOBS}} \
   nohup uv pip install --no-build-isolation -e . \
-    > /mnt/lustre/{{NAME_PREFIX}}/build.log 2>&1 &
+    > "$USER_ROOT/build.log" 2>&1 &
 
   echo "Build started ({{REMOTE}} {{BRANCH}}, jobs={{JOBS}}), follow with: just dev-build-log"
   EOF
 
 # Tail the dev build log
 dev-build-log:
-  {{KN}} exec {{DEV_POD_NAME}} -- tail -f /mnt/lustre/{{NAME_PREFIX}}/build.log
+  #!/usr/bin/env bash
+  set -euo pipefail
+  USER_ROOT=$(uv run manifesto dev-path user-root --user {{NAME_PREFIX}})
+  {{KN}} exec {{DEV_POD_NAME}} -- tail -f "$USER_ROOT/build.log"
 
 # Delete the dev pod
 dev-stop:
-  VLLM_DEV_IMAGE=$(python3 -c 'import yaml; print(yaml.safe_load(open("{{IMAGE_CATALOG}}"))["dev"]["image"])') envsubst < {{DEV_DIR}}/dev-pod.yaml | {{KN}} delete -f - --ignore-not-found=true
+  uv run manifesto render-dev-pod --user {{NAME_PREFIX}} | {{KN}} delete -f - --ignore-not-found=true
 
 NYANN_BENCH_DIR := env("NYANN_BENCH_DIR", "")
+# Spec whose gateway the nyann jobs target; override with NYANN_SPEC in .env or the environment.
+NYANN_SPEC := env("NYANN_SPEC", "models/deepseek-v4/1P-EP8-1D-EP8.yaml")
 NYANN_LOAD_JOB := NAME_PREFIX + "-sharegpt-load"
 NYANN_EVAL_JOB := NAME_PREFIX + "-nyann-eval"
 NYANN_GSM8K_JOB := NAME_PREFIX + "-eval-gsm8k"
@@ -247,14 +250,16 @@ nyann-stairs SWEEP_MIN='1600' SWEEP_MAX='14400' STEPS='10' STEP_DURATION='300s' 
     STEP_DURATION_VAL="{{STEP_DURATION}}"
     STEP_SECS="${STEP_DURATION_VAL%s}"
     EVAL_DURATION="$(( {{STEPS}} * STEP_SECS ))s"
+    GATEWAY=$(cd {{justfile_directory()}} && uv run manifesto name {{NYANN_SPEC}} inference-gateway-istio --user {{NAME_PREFIX}})
+    EVAL_BASE_URL="http://${GATEWAY}.{{NAMESPACE}}.svc.cluster.local/v1"
     cd "{{NYANN_BENCH_DIR}}"
     go run ./cmd/nyann-bench/ generate \
-      --target "{{EVAL_BASE_URL}}" \
+      --target "$EVAL_BASE_URL" \
       --config '{"load":{"concurrency":128},"warmup":{"duration":"60s","stagger":true},"sweep":{"min":{{SWEEP_MIN}},"max":{{SWEEP_MAX}},"steps":{{STEPS}},"step_duration":"{{STEP_DURATION}}"},"workload":{"type":"corpus","corpus_path":"{{LUSTRE_DATA}}/corpus/sharegpt.txt","isl":{{ISL}},"osl":{{OSL}},"turns":1}}' \
       --workers auto \
       --kube --kube.name {{NYANN_LOAD_JOB}} --kube.volume lustre --kube.image {{NYANN_IMAGE_TAG}} --kube.namespace {{NAMESPACE}} &
     go run ./cmd/nyann-bench/ generate \
-      --target "{{EVAL_BASE_URL}}" \
+      --target "$EVAL_BASE_URL" \
       --config "{\"load\":{\"concurrency\":{{EVAL_CONCURRENCY}},\"duration\":\"${EVAL_DURATION}\"},\"workload\":{\"type\":\"gsm8k\",\"gsm8k_path\":\"{{LUSTRE_DATA}}/gsm8k_test.jsonl\",\"gsm8k_train_path\":\"{{LUSTRE_DATA}}/gsm8k_train.jsonl\"}}" \
       --kube --kube.name {{NYANN_EVAL_JOB}} --kube.volume lustre --kube.image {{NYANN_IMAGE_TAG}} --kube.namespace {{NAMESPACE}} &
     wait
@@ -267,28 +272,32 @@ nyann CONCURRENCY='14400' DURATION='600s' ISL='500' OSL='1500' EVAL_CONCURRENCY=
       echo "Error: NYANN_BENCH_DIR is not set. Add it to .env or export it." >&2
       exit 1
     fi
+    GATEWAY=$(cd {{justfile_directory()}} && uv run manifesto name {{NYANN_SPEC}} inference-gateway-istio --user {{NAME_PREFIX}})
+    EVAL_BASE_URL="http://${GATEWAY}.{{NAMESPACE}}.svc.cluster.local/v1"
     cd "{{NYANN_BENCH_DIR}}"
     go run ./cmd/nyann-bench/ generate \
-      --target "{{EVAL_BASE_URL}}" \
+      --target "$EVAL_BASE_URL" \
       --config '{"load":{"concurrency":{{CONCURRENCY}},"duration":"{{DURATION}}","rampup":"30s"},"warmup":{"duration":"60s","stagger":true},"workload":{"type":"corpus","corpus_path":"{{LUSTRE_DATA}}/corpus/sharegpt.txt","isl":{{ISL}},"osl":{{OSL}},"turns":1}}' \
       --workers auto \
       --kube --kube.name {{NYANN_LOAD_JOB}} --kube.volume lustre --kube.image {{NYANN_IMAGE_TAG}} --kube.namespace {{NAMESPACE}} &
     go run ./cmd/nyann-bench/ generate \
-      --target "{{EVAL_BASE_URL}}" \
+      --target "$EVAL_BASE_URL" \
       --config '{"load":{"concurrency":{{EVAL_CONCURRENCY}},"duration":"{{DURATION}}"},"workload":{"type":"gsm8k","gsm8k_path":"{{LUSTRE_DATA}}/gsm8k_test.jsonl","gsm8k_train_path":"{{LUSTRE_DATA}}/gsm8k_train.jsonl"}}' \
       --kube --kube.name {{NYANN_EVAL_JOB}} --kube.volume lustre --kube.image {{NYANN_IMAGE_TAG}} --kube.namespace {{NAMESPACE}} &
     wait
     echo "nyann-bench jobs submitted. Use 'just nyann-logs load' or 'just nyann-logs eval' to follow."
 
 LUSTRE_DATA := "/mnt/lustre/" + NAME_PREFIX
-EVAL_BASE_URL := "http://" + DEPLOY_NAME + "-inference-gateway-istio." + NAMESPACE + ".svc.cluster.local/v1"
 
 NYANN_IMAGE_TAG := env("NYANN_IMAGE_TAG", "latest")
 
 # Run GSM8K eval (1319 math problems, ~30 min)
 nyann-eval-gsm8k CONCURRENCY='64':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GATEWAY=$(uv run manifesto name {{NYANN_SPEC}} inference-gateway-istio --user {{NAME_PREFIX}})
     cd {{NYANN_BENCH_DIR}} && NYANN_NAME_PREFIX={{NAME_PREFIX}} go run ./cmd/nyann-bench/ eval gsm8k \
-      --target "{{EVAL_BASE_URL}}" \
+      --target "http://${GATEWAY}.{{NAMESPACE}}.svc.cluster.local/v1" \
       --gsm8k-path {{LUSTRE_DATA}}/gsm8k_test.jsonl \
       --gsm8k-train-path {{LUSTRE_DATA}}/gsm8k_train.jsonl \
       --concurrency {{CONCURRENCY}} \
@@ -297,8 +306,11 @@ nyann-eval-gsm8k CONCURRENCY='64':
 
 # Run GPQA Diamond eval (198 grad-level science questions)
 nyann-eval-gpqa CONCURRENCY='64':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GATEWAY=$(uv run manifesto name {{NYANN_SPEC}} inference-gateway-istio --user {{NAME_PREFIX}})
     cd {{NYANN_BENCH_DIR}} && NYANN_NAME_PREFIX={{NAME_PREFIX}} go run ./cmd/nyann-bench/ eval gpqa \
-      --target "{{EVAL_BASE_URL}}" \
+      --target "http://${GATEWAY}.{{NAMESPACE}}.svc.cluster.local/v1" \
       --gpqa-path {{LUSTRE_DATA}}/gpqa_diamond.jsonl \
       --concurrency {{CONCURRENCY}} \
       --timeout 2h \
@@ -336,7 +348,7 @@ nyann-logs TARGET='load':
   {{KN}} logs -l app="$APP" -c nyann-bench --tail=50 -f --max-log-requests=20
 
 # Query Prometheus for per-stage benchmark metrics (requires port-forward: just prometheus)
-query-prometheus CLIENT_JOB=(NAME_PREFIX + "-sharegpt-load") DEPLOYMENT=DEPLOY_NAME EVAL_JOB=(NAME_PREFIX + "-nyann-eval") *ARGS='':
+query-prometheus CLIENT_JOB=(NAME_PREFIX + "-sharegpt-load") DEPLOYMENT=(NAME_PREFIX + "-wide-ep") EVAL_JOB=(NAME_PREFIX + "-nyann-eval") *ARGS='':
   #!/usr/bin/env bash
   set -euo pipefail
   if [ -z "{{NYANN_BENCH_DIR}}" ]; then

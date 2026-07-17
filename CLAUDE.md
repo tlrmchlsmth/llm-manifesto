@@ -23,9 +23,9 @@ The repository contains:
 - `manifesto/` - Python renderer implementation and CLI.
 - `models/` - Model deployment specs.
 - `clusters/` - Cluster profiles.
-- `dev/` - Persistent CPU-only pod for building vLLM from source on Lustre.
+- `dev/` - Dev image Containerfile; the persistent dev pod for building vLLM
+  from source is rendered by `manifesto render-dev-pod`.
 - `monitoring/` - Namespace-scoped Prometheus and Grafana stack.
-- `scripts/` - Operational helper scripts.
 - `tests/` - Renderer, validation, and UX regression tests.
 
 ## Architecture
