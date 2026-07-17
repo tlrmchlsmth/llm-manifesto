@@ -3,7 +3,10 @@ name: oci-gb200
 gpus_per_node: 4
 
 storage:
-  lustre_pvc: lustre-pvc-vllm
+  shared_volume:
+    persistentVolumeClaim:
+      claimName: lustre-pvc-vllm
+  shared_mount_path: /mnt/lustre
   local_nvme_path: /mnt/numa0
 
 logging:

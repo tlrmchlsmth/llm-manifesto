@@ -2,11 +2,6 @@
 name: cks-h200
 gpus_per_node: 8
 
-storage:
-  # Not mounted when cache host paths are configured, but kept for renderer compatibility.
-  lustre_pvc: unused
-  local_nvme_path: /mnt/local
-
 cache:
   hf_host_path: /mnt/local/hf-cache
   jit_host_path: /mnt/local/jit-cache

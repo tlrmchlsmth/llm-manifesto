@@ -103,9 +103,20 @@ def test_logs_persist_to_cluster_log_root():
     volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
     mounts = {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]}
 
-    assert volumes["lustre"]["persistentVolumeClaim"]["claimName"] == "lustre-pvc-vllm"
-    assert mounts["lustre"] == "/mnt/lustre"
+    assert volumes["shared-storage"]["persistentVolumeClaim"]["claimName"] == "lustre-pvc-vllm"
+    assert mounts["shared-storage"] == "/mnt/lustre"
     assert "LOG_DIR=/mnt/lustre/tester/logs/decode" in script
+
+
+def test_shared_storage_accepts_non_pvc_volume_sources():
+    cluster = replace(CLUSTER, shared_volume={"emptyDir": {}})
+    spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
+    objects = render(spec, user="tester", cluster=cluster)
+    lws = _find(objects, "LeaderWorkerSet", "decode")
+    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+    volume = next(volume for volume in pod_spec["volumes"] if volume["name"] == "shared-storage")
+
+    assert volume == {"name": "shared-storage", "emptyDir": {}}
 
 
 def test_dedicated_logging_pvc_is_mounted_when_configured():

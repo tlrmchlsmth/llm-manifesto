@@ -177,7 +177,7 @@ Cluster profiles own environment that should not be repeated in every model
 spec:
 
 - GPUs per node
-- Lustre and local NVMe mounts
+- shared and local volume mounts
 - user, log, cache, and dev venv path templates
 - llm-d release
 - UCX/NCCL/NVSHMEM/IMEX fabric env profiles
@@ -194,6 +194,21 @@ manifesto deploy models/qwen/h200-aggregated.yaml
 The namespace defaults to the current kube context namespace, falling back to
 `default` when the context has no namespace. Set `MANIFESTO_NAMESPACE` in `.env`
 to override it.
+
+Shared storage is configured without assuming a filesystem implementation:
+
+```yaml
+storage:
+  shared_volume:
+    persistentVolumeClaim:
+      claimName: model-cache
+  shared_mount_path: /mnt/shared
+  local_nvme_path: /mnt/local
+```
+
+`shared_volume` accepts any Kubernetes volume source, such as
+`persistentVolumeClaim`, `hostPath`, `csi`, `nfs`, or `emptyDir`. Profiles
+backed by separate host-local cache volumes can omit it entirely.
 
 Model-server stdout/stderr is persisted by the generated launch script. Configure
 the backing PVC and root path in the cluster profile:

@@ -36,7 +36,8 @@ class LlmdImages:
 class Cluster:
     name: str
     gpus_per_node: int
-    lustre_pvc: str
+    shared_volume: dict[str, Any] | None
+    shared_mount_path: str
     local_nvme_path: str
     shm_size: str
     ucx_net_devices: str
@@ -51,13 +52,13 @@ class Cluster:
     hf_home: str = "/mnt/local/hf_cache"
     rdma_resource_name: str | None = None
     rdma_resource_value: str = "1"
-    user_root_template: str = "/mnt/lustre/{user}"
-    log_root_template: str = "/mnt/lustre/{user}/logs"
+    user_root_template: str = "/mnt/shared/{user}"
+    log_root_template: str = "/mnt/shared/{user}/logs"
     logging_pvc: str | None = None
     logging_mount_path: str = "/mnt/logs"
-    cache_root_template: str = "/mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}"
-    dev_venv_template: str = "/mnt/lustre/{user}/vllm-venv"
-    dev_source_template: str = "/mnt/lustre/{user}/vllm-dev"
+    cache_root_template: str = "/mnt/shared/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}"
+    dev_venv_template: str = "/mnt/shared/{user}/vllm-venv"
+    dev_source_template: str = "/mnt/shared/{user}/vllm-dev"
     images: ImageCatalog = DEFAULT_IMAGES
 
     def base_volumes(self) -> list[dict]:
@@ -80,9 +81,11 @@ class Cluster:
                 ]
             )
         else:
+            if not self.shared_volume:
+                raise ValueError("storage.shared_volume is required when host caches are not configured")
             volumes.extend(
                 [
-                    {"name": "lustre", "persistentVolumeClaim": {"claimName": self.lustre_pvc}},
+                    {"name": "shared-storage", **self.shared_volume},
                     {"name": "local-nvme", "hostPath": {"path": self.local_nvme_path, "type": "Directory"}},
                 ]
             )
@@ -108,7 +111,7 @@ class Cluster:
             ]
         return [
             {"name": "dshm", "mountPath": "/dev/shm"},
-            {"name": "lustre", "mountPath": "/mnt/lustre"},
+            {"name": "shared-storage", "mountPath": self.shared_mount_path},
             {"name": "local-nvme", "mountPath": "/mnt/local"},
         ]
 
@@ -146,7 +149,8 @@ class Cluster:
         return Cluster(
             name=self.name,
             gpus_per_node=self.gpus_per_node,
-            lustre_pvc=self.lustre_pvc,
+            shared_volume=dict(self.shared_volume) if self.shared_volume else None,
+            shared_mount_path=self.shared_mount_path,
             local_nvme_path=self.local_nvme_path,
             shm_size=self.shm_size,
             ucx_net_devices=self.ucx_net_devices,
@@ -201,12 +205,15 @@ def load_cluster(path: str | Path) -> Cluster:
     cache = data.get("cache", {})
     rdma = data.get("rdma", {})
     logging = data.get("logging", {})
-    user_root = paths.get("user_root", "/mnt/lustre/{user}")
+    storage = data.get("storage", {})
+    shared_mount_path = storage.get("shared_mount_path", "/mnt/shared")
+    user_root = paths.get("user_root", f"{shared_mount_path}/{{user}}")
     return Cluster(
         name=data["name"],
         gpus_per_node=int(data.get("gpus_per_node", 4)),
-        lustre_pvc=data["storage"]["lustre_pvc"],
-        local_nvme_path=data["storage"].get("local_nvme_path", "/mnt/numa0"),
+        shared_volume=storage.get("shared_volume"),
+        shared_mount_path=shared_mount_path,
+        local_nvme_path=storage.get("local_nvme_path", "/mnt/numa0"),
         shm_size=data.get("pod_defaults", {}).get("shm_size", "2Gi"),
         ucx_net_devices=fabric["ucx_net_devices"],
         llm_d=LlmdImages.from_config(data.get("llm_d", {}), DEFAULT_IMAGES),
@@ -226,9 +233,9 @@ def load_cluster(path: str | Path) -> Cluster:
         logging_mount_path=logging.get("mount_path", "/mnt/logs"),
         cache_root_template=paths.get(
             "cache_root",
-            "/mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}",
+            f"{shared_mount_path}/{{user}}/jit-cache/{{gpu_arch}}/{{cuda}}/{{vllm_version}}/{{release}}",
         ),
-        dev_venv_template=dev.get("venv", "/mnt/lustre/{user}/vllm-venv"),
-        dev_source_template=dev.get("source", "/mnt/lustre/{user}/vllm-dev"),
+        dev_venv_template=dev.get("venv", f"{shared_mount_path}/{{user}}/vllm-venv"),
+        dev_source_template=dev.get("source", f"{shared_mount_path}/{{user}}/vllm-dev"),
         images=DEFAULT_IMAGES,
     )
