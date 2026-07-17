@@ -30,7 +30,7 @@ def test_compact_parallelism_and_equations_resolve_to_runtime_values():
     assert role.dp_load_balancing == DpLoadBalancing.EXTERNAL
 
     assert resolved.env["MAX_TOKENS"] == "1024"
-    assert resolved.env["UCX_NET_DEVICES"] == CLUSTER.ucx_net_devices
+    assert resolved.env["UCX_NET_DEVICES"] == CLUSTER.fabric.ucx_net_devices
     assert resolved.env["NVSHMEM_QP_DEPTH"] == "2050"
     assert resolved.vllm_args["max_num_batched_tokens"] == 1024
     assert resolved.vllm_args["max_num_seqs"] == 1024
@@ -131,7 +131,7 @@ def test_explicit_resource_gpu_request_overrides_inferred_request():
             ],
         }
     )
-    spec.apply_cluster_defaults(replace(CLUSTER, gpus_per_node=8))
+    spec.apply_cluster_defaults(CLUSTER.model_copy(update={"gpus_per_node": 8}))
 
     assert spec.role("prefill").gpus_per_pod == 2
     assert spec.role("prefill").resources.gpus == 1

@@ -1,6 +1,5 @@
 """Structural tests for rendered Kubernetes objects and YAML serialization."""
 
-from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -109,7 +108,8 @@ def test_logs_persist_to_cluster_log_root():
 
 
 def test_shared_storage_accepts_non_pvc_volume_sources():
-    cluster = replace(CLUSTER, shared_volume={"emptyDir": {}})
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.storage.shared_volume = {"emptyDir": {}}
     spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
     objects = render(spec, user="tester", cluster=cluster)
     lws = _find(objects, "LeaderWorkerSet", "decode")
@@ -120,12 +120,10 @@ def test_shared_storage_accepts_non_pvc_volume_sources():
 
 
 def test_dedicated_logging_pvc_is_mounted_when_configured():
-    cluster = replace(
-        CLUSTER,
-        logging_pvc="logs-pvc",
-        logging_mount_path="/mnt/logs",
-        log_root_template="/mnt/logs/{user}/{release}",
-    )
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.logging.pvc = "logs-pvc"
+    cluster.logging.mount_path = "/mnt/logs"
+    cluster.logging.root = "/mnt/logs/{user}/{release}"
     spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
     objects = render(spec, user="tester", cluster=cluster)
     lws = _find(objects, "LeaderWorkerSet", "decode")
