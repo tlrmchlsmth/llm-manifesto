@@ -214,8 +214,13 @@ def ready(args) -> int:
     spec = load_spec(args.spec)
     instance = Instance(user=config.user, release=spec.release)
     epp = instance.name("infpool-epp")
-    gateway = instance.name("inference-gateway-istio")
     routing_enabled = spec.routing.kind != RoutingKind.DISABLED
+
+    gateway = ""
+    if routing_enabled:
+        cluster = load_cluster_with_overrides(resolve_cluster(config.cluster_path), args)
+        gateway_name = instance.name("gateway", max_length=63 - len(cluster.gateway.class_name) - 1)
+        gateway = f"{gateway_name}-{cluster.gateway.class_name}"
 
     print("Waiting for model pods and endpoint picker...")
     waits = [

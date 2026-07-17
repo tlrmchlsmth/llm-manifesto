@@ -216,6 +216,18 @@ storage:
 `persistentVolumeClaim`, `hostPath`, `csi`, `nfs`, or `emptyDir`. Profiles
 backed by separate host-local cache volumes can omit it entirely.
 
+Set `platform: openshift` for OpenShift clusters. This adds a stable `USER`
+fallback for Python libraries when containers run under an arbitrary UID,
+without affecting standard Kubernetes profiles.
+
+Select a non-default Gateway API implementation in the cluster profile:
+
+```yaml
+gateway:
+  class_name: data-science-gateway-class
+  service_type: ClusterIP
+```
+
 Compiled-cache paths derive their cache key from the resolved model image tag
 or digest. Custom and dev builds can force a fresh namespace explicitly:
 

@@ -79,6 +79,7 @@ def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_ready_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("spec")
+    parser.add_argument("--cluster")
     parser.add_argument("--namespace")
     parser.add_argument("--user")
     parser.add_argument("--gateway-timeout", type=int, default=120)

@@ -52,7 +52,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
     dev_venv = spec.runtime.dev_venv or (
         cluster.dev_venv(user=instance.user_slug, release=instance.release_slug) if spec.runtime.dev else ""
     )
-    env = _base_env(spec, cache_prefix, dev_venv=dev_venv)
+    env = _base_env(spec, cache_prefix, dev_venv=dev_venv, platform=cluster.platform)
     env |= cluster.fabric_env(fabric_profile, context)
     env |= spec.runtime.env
     env |= role.env
@@ -85,9 +85,11 @@ def _variable_context(spec: DeploymentSpec, role: RoleSpec, layout: ParallelLayo
     }
 
 
-def _base_env(spec: DeploymentSpec, cache_prefix: str, *, dev_venv: str) -> dict[str, str]:
-    return {
+def _base_env(spec: DeploymentSpec, cache_prefix: str, *, dev_venv: str, platform: str) -> dict[str, str]:
+    env = {
         "HF_HOME": spec.model.hf_home,
+        "HOME": f"{cache_prefix}/home",
+        "XDG_CACHE_HOME": f"{cache_prefix}/xdg",
         "VLLM_DEV_VENV": dev_venv,
         "VLLM_NO_USAGE_STATS": "1",
         "TQDM_DISABLE": "1",
@@ -97,8 +99,15 @@ def _base_env(spec: DeploymentSpec, cache_prefix: str, *, dev_venv: str) -> dict
         "FLASHINFER_WORKSPACE_BASE": f"{cache_prefix}/flashinfer-workspace",
         "FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED": "1",
         "FLASH_ATTENTION_CUTE_DSL_CACHE_DIR": f"{cache_prefix}/fa-cute-dsl",
+        "TRITON_CACHE_DIR": f"{cache_prefix}/triton",
+        "TORCHINDUCTOR_CACHE_DIR": f"{cache_prefix}/torchinductor",
         "TILELANG_CACHE_DIR": f"{cache_prefix}/tilelang",
     }
+    if platform == "openshift":
+        # OpenShift commonly assigns an arbitrary UID absent from /etc/passwd.
+        # Python getpass (used by torch during import) honors USER first.
+        env["USER"] = "vllm"
+    return env
 
 
 def _resource_claims(cluster: Cluster, fabric_profile: str) -> list[dict[str, str]]:

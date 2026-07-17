@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from manifesto.cli import main
+from manifesto.cluster import load_cluster
 import manifesto.workflow as workflow
 
 
@@ -194,6 +195,34 @@ def test_ready_waits_for_spec_roles_only(monkeypatch, tmp_path):
     assert not any("llm-d.ai/role=prefill" in cmd for cmd in joined)
     # Routing is disabled, so no endpoint picker wait is issued.
     assert not any("deploy/" in cmd for cmd in joined)
+
+
+def test_ready_uses_gateway_class_from_cluster(monkeypatch):
+    popen_cmds = []
+    capture_cmds = []
+
+    class FakeProc:
+        def wait(self):
+            return 0
+
+    cluster = load_cluster(CLUSTER)
+    cluster.gateway.class_name = "platform-gateway"
+    monkeypatch.setenv("MANIFESTO_NAMESPACE", "workload-ns")
+    monkeypatch.setattr(workflow, "load_cluster_with_overrides", lambda *_: cluster)
+    monkeypatch.setattr(workflow.subprocess, "Popen", lambda cmd: popen_cmds.append(cmd) or FakeProc())
+    monkeypatch.setattr(
+        workflow,
+        "capture",
+        lambda cmd, **_: capture_cmds.append(cmd) or '{"data":[{"id":"model"}]}',
+    )
+
+    rc = main(["ready", str(MODEL), "--cluster", "cluster.yaml", "--user", "tester"])
+
+    assert rc == 0
+    assert popen_cmds
+    gateway_url = capture_cmds[0][-1]
+    assert gateway_url.endswith("-platform-gateway:80/v1/models")
+    assert len(gateway_url.removeprefix("http://").removesuffix(":80/v1/models")) <= 63
 
 
 def test_apply_file_does_not_require_cluster(monkeypatch, tmp_path):
