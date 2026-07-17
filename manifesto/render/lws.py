@@ -13,7 +13,7 @@ from ..spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
     resolved = resolve_role(spec, instance, cluster, role)
-    external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
+    external_dp = role.parallelism.dp_enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
     workload_name = instance.user_scoped_name(role.workload_name) if role.workload_name else instance.name(role.name)
 
     containers, extra_volumes = sidecars(
@@ -32,10 +32,10 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     ]
     if external_dp:
         container_ports.insert(0, {"containerPort": 8100, "name": "dp-supervisor", "protocol": "TCP"})
-    readiness_ports = resolved.ports.public if role.routing_sidecar else resolved.ports.backend
+    readiness_ports = resolved.ports.public if role.routing_proxy else resolved.ports.backend
 
     init_containers = []
-    if role.routing_sidecar:
+    if role.routing_proxy:
         init_containers.append(
             {
                 "name": "routing-proxy",

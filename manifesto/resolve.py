@@ -9,7 +9,7 @@ from .cluster import Cluster
 from .equations import render_mapping
 from .instance import Instance
 from .dp_ports import RolePorts, derive_ports
-from .parallelism import parallel_layout
+from .parallelism import ParallelLayout, parallel_layout
 from .spec import DeploymentSpec, RoleSpec
 
 
@@ -25,13 +25,14 @@ class ResolvedRole:
 
 
 def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> ResolvedRole:
+    layout = parallel_layout(role)
     ports = derive_ports(
-        data_parallel_enabled=role.data_parallel.enabled,
-        data_parallel_local_size=role.data_parallel.local_size,
+        data_parallel_enabled=layout.dp_enabled,
+        data_parallel_local_size=layout.dp_local_size if layout.dp_enabled else None,
         public_base=role.serving_port_base,
         backend_base=role.backend_port_base,
     )
-    context = _variable_context(spec, role)
+    context = _variable_context(spec, role, layout)
     computed_env = render_mapping(role.computed.get("env", {}), context)
     context |= computed_env
     computed_vllm_args = render_mapping(role.computed.get("vllm", {}), context)
@@ -39,7 +40,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
     fabric_profile = cluster.fabric_profile_for(
         topology=spec.topology.value,
         role_name=role.name,
-        expert_parallel=role.expert_parallel.enabled,
+        expert_parallel=role.parallelism.ep,
     )
 
     cache_prefix = cluster.cache_root(
@@ -69,9 +70,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
     )
 
 
-def _variable_context(spec: DeploymentSpec, role: RoleSpec) -> dict[str, Any]:
-    layout = parallel_layout(role)
-
+def _variable_context(spec: DeploymentSpec, role: RoleSpec, layout: ParallelLayout) -> dict[str, Any]:
     return {
         **spec.vars,
         **role.vars,
@@ -79,7 +78,7 @@ def _variable_context(spec: DeploymentSpec, role: RoleSpec) -> dict[str, Any]:
         "tp": layout.tp_world_size,
         "tp_world_size": layout.tp_world_size,
         "tp_local_size": layout.tp_local_size,
-        "dp_enabled": role.data_parallel.enabled,
+        "dp_enabled": layout.dp_enabled,
         "dp_local_size": layout.dp_local_size,
         "dp_world_size": layout.dp_world_size,
         "lws_size": role.lws.size,

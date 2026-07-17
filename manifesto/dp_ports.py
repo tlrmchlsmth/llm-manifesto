@@ -24,7 +24,7 @@ def derive_ports(
 ) -> RolePorts:
     if data_parallel_enabled:
         if not data_parallel_local_size or data_parallel_local_size < 1:
-            raise ValueError("data_parallel.local_size must be >= 1 when DP is enabled")
+            raise ValueError("local DP size must be >= 1 when DP is enabled")
         rank_count = data_parallel_local_size
     else:
         rank_count = 1

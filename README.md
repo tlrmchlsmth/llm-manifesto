@@ -103,8 +103,7 @@ models/deepseek-v4/1P-EP8-1D-EP8.yaml
 models/deepseek-v4/3P-EP8-1D-EP16.yaml
 ```
 
-A spec chooses the topology, roles, parallelism, vLLM args, and routing behavior.
-Compact aliases are supported where they make the file easier to read:
+A spec chooses the topology, roles, parallelism, vLLM args, and routing behavior:
 
 ```yaml
 release: wide-ep
@@ -133,9 +132,13 @@ roles:
 ```
 
 `tp` and `dp` are global sizes. Local DP, port fanout, and per-pod launch
-arguments are derived from the workload size and GPUs per pod. Single-node
-roles render as Kubernetes Deployments; roles spanning multiple nodes render as
-LeaderWorkerSets.
+arguments are derived from the workload size and GPUs per pod. GPUs per pod is
+inferred from the parallel layout and the cluster profile; set
+`parallelism.gpus` to override it. Single-node roles render as Kubernetes
+Deployments; roles spanning multiple nodes render as LeaderWorkerSets.
+
+Unknown role keys are rejected at load time, so typos fail loudly instead of
+being silently ignored.
 
 `workload_name` is optional. When set, it controls the Deployment or
 LeaderWorkerSet name and therefore the Kubernetes pod name prefix, while full

@@ -5,13 +5,12 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .cluster import Cluster
 from .images import apply_image_refs
-from .normalize import apply_cluster_defaults, normalize_role
 from .overrides import load_spec_data
 
 
@@ -31,27 +30,40 @@ class DpLoadBalancing(StrEnum):
     EXTERNAL = "external"
 
 
-class DataParallelSpec(BaseModel):
-    enabled: bool = False
-    local_size: int | None = None
-
-    @model_validator(mode="after")
-    def validate_local_size(self) -> "DataParallelSpec":
-        if self.enabled and (self.local_size is None or self.local_size < 1):
-            raise ValueError("data_parallel.local_size is required when data_parallel.enabled is true")
-        return self
-
-
-class ExpertParallelSpec(BaseModel):
-    enabled: bool = False
+# GPU count assumed when a spec is loaded without a cluster profile to infer from.
+DEFAULT_GPUS_PER_POD = 4
 
 
 class LwsSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     size: int = Field(1, ge=1)
     replicas: int = Field(1, ge=1)
 
 
+class ParallelismSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tp: int = Field(1, ge=1)
+    dp: int | bool | None = None
+    ep: bool = False
+    gpus: int | None = Field(None, ge=1, validation_alias=AliasChoices("gpus", "gpus_per_node"))
+
+    @property
+    def dp_size(self) -> int:
+        """Requested global data-parallel size; 1 means data parallelism is off."""
+        if self.dp is None or isinstance(self.dp, bool):
+            return 1
+        return max(1, self.dp)
+
+    @property
+    def dp_enabled(self) -> bool:
+        return self.dp_size > 1
+
+
 class ResourceSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     cpu: str = "32"
     memory: str = "512Gi"
     gpus: int = Field(4, ge=0)
@@ -59,19 +71,20 @@ class ResourceSpec(BaseModel):
 
 
 class RoleSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     workload_name: str | None = None
     lws: LwsSpec = Field(default_factory=LwsSpec)
-    gpus_per_pod: int = Field(4, ge=1, validation_alias=AliasChoices("gpus_per_pod", "gpus_per_node", "gpus"))
-    tensor_parallel_size: int = Field(1, ge=1, validation_alias=AliasChoices("tensor_parallel_size", "tp"))
-    data_parallel: DataParallelSpec = Field(default_factory=DataParallelSpec)
-    expert_parallel: ExpertParallelSpec = Field(default_factory=ExpertParallelSpec)
+    parallelism: ParallelismSpec = Field(default_factory=ParallelismSpec)
     serving_port_base: int = 8000
     backend_port_base: int | None = None
-    routing_sidecar: bool = False
+    routing_proxy: bool = False
     dp_load_balancing: DpLoadBalancing = DpLoadBalancing.INTERNAL
     kv_transfer_config: dict[str, Any] | None = None
-    vllm_args: dict[str, Any] = Field(default_factory=dict)
+    vllm_args: dict[str, Any] = Field(
+        default_factory=dict, validation_alias=AliasChoices("vllm", "vllm_args")
+    )
     env: dict[str, str] = Field(default_factory=dict)
     pre_launch: list[str] = Field(default_factory=list)
     vars: dict[str, Any] = Field(default_factory=dict)
@@ -79,14 +92,15 @@ class RoleSpec(BaseModel):
     resources: ResourceSpec = Field(default_factory=ResourceSpec)
     shm_size: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def compact_shape(cls, data: Any) -> Any:
-        return normalize_role(data)
+    @property
+    def gpus_per_pod(self) -> int:
+        if self.parallelism.gpus is not None:
+            return self.parallelism.gpus
+        return DEFAULT_GPUS_PER_POD
 
     @model_validator(mode="after")
-    def validate_parallelism(self) -> "RoleSpec":
-        if self.routing_sidecar and self.backend_port_base is None:
+    def default_backend_port(self) -> "RoleSpec":
+        if self.routing_proxy and self.backend_port_base is None:
             self.backend_port_base = 8200
         return self
 
@@ -167,7 +181,7 @@ class DeploymentSpec(BaseModel):
         if self.topology == TopologyKind.PD:
             decode = self.role("decode")
             decode.dp_load_balancing = DpLoadBalancing.EXTERNAL
-            decode.routing_sidecar = True
+            decode.routing_proxy = True
             decode.serving_port_base = 8000
             decode.backend_port_base = 8200
         return self
@@ -178,6 +192,29 @@ class DeploymentSpec(BaseModel):
                 return role
         raise KeyError(f"unknown role: {name}")
 
+    def apply_cluster_defaults(self, cluster: Cluster) -> None:
+        if self.model.hf_home is None:
+            self.model.hf_home = cluster.hf_home
+        for role in self.roles:
+            if role.parallelism.gpus is None:
+                role.parallelism.gpus = _infer_gpus_per_pod(role, cluster.gpus_per_node)
+            if "gpus" not in role.resources.model_fields_set:
+                role.resources.gpus = role.gpus_per_pod
+
+
+def _infer_gpus_per_pod(role: RoleSpec, cluster_gpus_per_node: int) -> int:
+    parallelism = role.parallelism
+    if parallelism.tp > cluster_gpus_per_node:
+        tp_local = max(1, parallelism.tp // role.lws.size)
+    else:
+        tp_local = parallelism.tp
+
+    if parallelism.dp_enabled:
+        return tp_local * max(1, parallelism.dp_size // role.lws.size)
+    if parallelism.dp is False:
+        return tp_local
+    return cluster_gpus_per_node
+
 
 def _safe_cache_key(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "latest"
@@ -186,6 +223,7 @@ def _safe_cache_key(value: str) -> str:
 def load_spec(path: str | Path, cluster: Cluster | None = None) -> DeploymentSpec:
     data = load_spec_data(path)
     data = apply_image_refs(data)
+    spec = DeploymentSpec.model_validate(data)
     if cluster is not None:
-        data = apply_cluster_defaults(data, gpus_per_node=cluster.gpus_per_node, hf_home=cluster.hf_home)
-    return DeploymentSpec.model_validate(data)
+        spec.apply_cluster_defaults(cluster)
+    return spec

@@ -26,11 +26,11 @@ def _role_warnings(role: RoleSpec) -> list[RenderWarning]:
     warnings: list[RenderWarning] = []
     layout = parallel_layout(role)
 
-    if role.tensor_parallel_size > role.gpus_per_pod and role.tensor_parallel_size % role.lws.size != 0:
+    if layout.tp_world_size > role.gpus_per_pod and layout.tp_world_size % role.lws.size != 0:
         warnings.append(
             RenderWarning(
                 "tp-not-evenly-split",
-                f"{role.name}: global TP {role.tensor_parallel_size} does not divide evenly across {role.lws.size} LWS nodes",
+                f"{role.name}: global TP {layout.tp_world_size} does not divide evenly across {role.lws.size} LWS nodes",
             )
         )
     if role.gpus_per_pod % layout.tp_local_size != 0:
@@ -40,13 +40,12 @@ def _role_warnings(role: RoleSpec) -> list[RenderWarning]:
                 f"{role.name}: {role.gpus_per_pod} GPUs per node is not divisible by local TP {layout.tp_local_size}",
             )
         )
-    if role.data_parallel.enabled:
-        requested_dp = role.vars.get("dp_world_requested")
-        if requested_dp and requested_dp != layout.dp_world_size:
+    if layout.dp_enabled:
+        if layout.dp_requested != layout.dp_world_size:
             warnings.append(
                 RenderWarning(
                     "dp-not-evenly-split",
-                    f"{role.name}: global DP {requested_dp} does not divide evenly across {role.lws.size} LWS nodes; rendering DP {layout.dp_world_size}",
+                    f"{role.name}: global DP {layout.dp_requested} does not divide evenly across {role.lws.size} LWS nodes; rendering DP {layout.dp_world_size}",
                 )
             )
         expected = role.gpus_per_pod // layout.tp_local_size
@@ -64,7 +63,7 @@ def _role_warnings(role: RoleSpec) -> list[RenderWarning]:
                 f"{role.name}: DP is disabled but local TP {layout.tp_local_size} leaves multiple local rank slots",
             )
         )
-    if role.routing_sidecar and role.dp_load_balancing != DpLoadBalancing.EXTERNAL:
+    if role.routing_proxy and role.dp_load_balancing != DpLoadBalancing.EXTERNAL:
         warnings.append(
             RenderWarning(
                 "routing-proxy-with-internal-dp",

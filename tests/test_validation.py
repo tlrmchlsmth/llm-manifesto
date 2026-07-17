@@ -1,5 +1,8 @@
 """Tests for warning-only validation around risky parallelism combinations."""
 
+import pytest
+from pydantic import ValidationError
+
 from manifesto.spec import DeploymentSpec
 from manifesto.warnings import collect_warnings
 
@@ -84,7 +87,7 @@ def test_routing_proxy_sets_default_port_bases():
     )
 
     role = spec.role("decode")
-    assert role.routing_sidecar is True
+    assert role.routing_proxy is True
     assert role.serving_port_base == 8000
     assert role.backend_port_base == 8200
 
@@ -141,10 +144,10 @@ def test_pd_topology_sets_decode_proxy_without_role_flag():
         }
     )
 
-    assert spec.role("decode").routing_sidecar is True
+    assert spec.role("decode").routing_proxy is True
     assert spec.role("decode").dp_load_balancing == "external"
     assert spec.role("decode").backend_port_base == 8200
-    assert spec.role("prefill").routing_sidecar is False
+    assert spec.role("prefill").routing_proxy is False
 
 
 def test_parallelism_gpus_alias_still_parses():
@@ -161,3 +164,14 @@ def test_parallelism_gpus_alias_still_parses():
     role = spec.role("decode")
     assert role.lws.size == 4
     assert role.gpus_per_pod == 4
+
+
+def test_unknown_role_keys_are_rejected():
+    with pytest.raises(ValidationError):
+        DeploymentSpec.model_validate(
+            _spec_with_role({"name": "decode", "tensor_parallel_size": 4})
+        )
+    with pytest.raises(ValidationError):
+        DeploymentSpec.model_validate(
+            _spec_with_role({"name": "decode", "parallelism": {"tp": 1, "dp_load_balancing": "external"}})
+        )
