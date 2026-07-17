@@ -7,6 +7,7 @@ import yaml
 from manifesto.cluster import load_cluster
 from manifesto.images import DEFAULT_IMAGES
 from manifesto.render import render, render_to_yaml
+from manifesto.render.devpod import render_dev_pod
 from manifesto.spec import load_spec
 
 
@@ -264,6 +265,28 @@ def test_cks_h200_cluster_uses_coreweave_cache_and_rdma_settings():
     assert "--max-cudagraph-capture-size" not in script
     assert container["resources"]["requests"]["rdma/ib"] == "1"
     assert container["resources"]["limits"]["rdma/ib"] == "1"
+
+
+def test_dev_pod_derives_storage_and_paths_from_cluster_profile():
+    pod = render_dev_pod(CLUSTER, "Tester.Name")
+    container = pod["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    volumes = {volume["name"]: volume for volume in pod["spec"]["volumes"]}
+
+    assert pod["metadata"]["name"] == "tester-name-vllm-dev"
+    assert container["image"] == DEFAULT_IMAGES.get("dev.image")
+    assert volumes["shared-storage"]["persistentVolumeClaim"]["claimName"] == "lustre-pvc-vllm"
+    assert container["workingDir"] == "/mnt/lustre/tester-name/vllm-dev"
+    assert env["HF_HOME"] == "/mnt/lustre/hf_cache"
+    assert env["CCACHE_DIR"] == "/mnt/lustre/tester-name/ccache"
+
+    h200_pod = render_dev_pod(CKS_H200, "tester")
+    h200_volumes = {volume["name"]: volume for volume in h200_pod["spec"]["volumes"]}
+    h200_env = {
+        item["name"]: item["value"] for item in h200_pod["spec"]["containers"][0]["env"] if "value" in item
+    }
+    assert h200_volumes["hf-cache"]["hostPath"]["path"] == "/mnt/local/hf-cache"
+    assert h200_env["HF_HOME"] == "/var/cache/huggingface"
 
 
 def test_lws_uses_cluster_routing_sidecar_image():

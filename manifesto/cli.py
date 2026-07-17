@@ -9,6 +9,8 @@ import subprocess
 import sys
 
 from .instance import Instance
+from .render import render_to_yaml
+from .render.devpod import render_dev_pod
 from .spec import load_spec
 from .workflow import (
     RuntimeConfig,
@@ -65,6 +67,16 @@ def _add_file_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output")
 
 
+def _add_cluster_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--cluster")
+    parser.add_argument("--user")
+    parser.add_argument("--user-root")
+    parser.add_argument("--log-root")
+    parser.add_argument("--cache-root")
+    parser.add_argument("--dev-venv")
+    parser.add_argument("--dev-source")
+
+
 def _add_ready_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("spec")
     parser.add_argument("--namespace")
@@ -97,26 +109,23 @@ def main(argv: list[str] | None = None) -> int:
 
     cache_parser = sub.add_parser("cache-path", help="print the resolved compile cache path")
     cache_parser.add_argument("spec")
-    cache_parser.add_argument("--cluster")
-    cache_parser.add_argument("--user")
-    cache_parser.add_argument("--user-root")
-    cache_parser.add_argument("--log-root")
-    cache_parser.add_argument("--cache-root")
-    cache_parser.add_argument("--dev-venv")
-    cache_parser.add_argument("--dev-source")
+    _add_cluster_args(cache_parser)
     cache_parser.set_defaults(func=_cache_path)
 
     log_parser = sub.add_parser("log-path", help="print the resolved persisted log directory")
     log_parser.add_argument("spec")
-    log_parser.add_argument("--cluster")
-    log_parser.add_argument("--user")
     log_parser.add_argument("--role", required=True)
-    log_parser.add_argument("--user-root")
-    log_parser.add_argument("--log-root")
-    log_parser.add_argument("--cache-root")
-    log_parser.add_argument("--dev-venv")
-    log_parser.add_argument("--dev-source")
+    _add_cluster_args(log_parser)
     log_parser.set_defaults(func=_log_path)
+
+    dev_path_parser = sub.add_parser("dev-path", help="print a resolved dev workflow path")
+    dev_path_parser.add_argument("kind", choices=["venv", "source", "user-root"])
+    _add_cluster_args(dev_path_parser)
+    dev_path_parser.set_defaults(func=_dev_path)
+
+    dev_pod_parser = sub.add_parser("render-dev-pod", help="render the persistent dev pod to stdout")
+    _add_cluster_args(dev_pod_parser)
+    dev_pod_parser.set_defaults(func=_render_dev_pod)
 
     render_file_parser = sub.add_parser("render-file", help="render a full manifest to the workflow file")
     _add_render_args(render_file_parser)
@@ -201,6 +210,26 @@ def _log_path(args: argparse.Namespace) -> int:
     spec = load_spec(args.spec)
     instance = Instance(user=resolve_user(args.user), release=spec.release)
     print(f"{cluster.log_root(user=instance.user_slug, release=instance.release_slug)}/{args.role}")
+    return 0
+
+
+def _dev_path(args: argparse.Namespace) -> int:
+    load_dotenv()
+    cluster = load_cluster_with_overrides(resolve_cluster(args.cluster), args)
+    user_slug = Instance(user=resolve_user(args.user), release="dev").user_slug
+    paths = {
+        "venv": cluster.dev_venv,
+        "source": cluster.dev_source,
+        "user-root": cluster.user_root,
+    }
+    print(paths[args.kind](user=user_slug, release=""))
+    return 0
+
+
+def _render_dev_pod(args: argparse.Namespace) -> int:
+    load_dotenv()
+    cluster = load_cluster_with_overrides(resolve_cluster(args.cluster), args)
+    sys.stdout.write(render_to_yaml([render_dev_pod(cluster, resolve_user(args.user))]))
     return 0
 
 
