@@ -66,7 +66,3 @@ class Instance:
         if role:
             selector["llm-d.ai/role"] = _slug(role)
         return selector
-
-    def lustre_path(self, *parts: str) -> str:
-        clean = [self.user_slug, *[_slug(part) for part in parts if part]]
-        return "/mnt/lustre/" + "/".join(clean)

@@ -147,12 +147,12 @@ def test_pd_topology_sets_decode_proxy_without_role_flag():
     assert spec.role("prefill").routing_sidecar is False
 
 
-def test_legacy_lws_nodes_and_gpus_aliases_still_parse():
+def test_parallelism_gpus_alias_still_parses():
     spec = DeploymentSpec.model_validate(
         _spec_with_role(
             {
                 "name": "decode",
-                "lws": {"nodes": 4},
+                "lws": {"size": 4},
                 "parallelism": {"gpus": 4, "tp": 1, "dp": 16, "ep": True},
             }
         )

@@ -16,9 +16,7 @@ from .spec import DeploymentSpec, RoleSpec
 @dataclass(frozen=True)
 class ResolvedRole:
     ports: RolePorts
-    user_root: str
     log_dir: str
-    cache_prefix: str
     dev_source: str
     fabric_profile: str
     env: dict[str, str]
@@ -36,7 +34,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
     context = _variable_context(spec, role)
     computed_env = render_mapping(role.computed.get("env", {}), context)
     context |= computed_env
-    computed_vllm_args = render_mapping(role.computed.get("vllm", role.computed.get("vllm_args", {})), context)
+    computed_vllm_args = render_mapping(role.computed.get("vllm", {}), context)
 
     fabric_profile = cluster.fabric_profile_for(
         topology=spec.topology.value,
@@ -62,9 +60,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
 
     return ResolvedRole(
         ports=ports,
-        user_root=cluster.user_root(user=instance.user_slug, release=instance.release_slug),
         log_dir=f"{cluster.log_root(user=instance.user_slug, release=instance.release_slug)}/{role.name}",
-        cache_prefix=cache_prefix,
         dev_source=cluster.dev_source(user=instance.user_slug, release=instance.release_slug),
         fabric_profile=fabric_profile,
         env=env,

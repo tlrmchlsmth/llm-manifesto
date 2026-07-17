@@ -41,7 +41,7 @@ def render(spec: DeploymentSpec, *, user: str, cluster: Cluster, routing_only: b
         return render_routing(spec, instance, cluster)
 
     objects = [render_service_account(instance)]
-    if any("dcgm-exporter" in spec.runtime.sidecars for _role in spec.roles):
+    if spec.roles and "dcgm-exporter" in spec.runtime.sidecars:
         objects.append(render_dcgm_metrics_configmap(instance))
     for role in spec.roles:
         objects.append(render_workload(spec, instance, cluster, role))

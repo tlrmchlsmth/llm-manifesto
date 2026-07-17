@@ -13,14 +13,7 @@ from ..spec import DeploymentSpec, RoutingKind, RoutingSpec
 def _plugin_config(routing: RoutingSpec) -> str:
     if routing.plugin_config is not None:
         return yaml.safe_dump(routing.plugin_config, sort_keys=False)
-    if routing.kind == RoutingKind.RANDOM:
-        config = {
-            "apiVersion": "inference.networking.x-k8s.io/v1alpha1",
-            "kind": "EndpointPickerConfig",
-            "plugins": [{"type": "weighted-random-picker"}],
-            "schedulingProfiles": [{"name": "default", "plugins": [{"pluginRef": "weighted-random-picker"}]}],
-        }
-    elif routing.kind == RoutingKind.PD:
+    if routing.kind == RoutingKind.PD:
         config = {
             "apiVersion": "inference.networking.x-k8s.io/v1alpha1",
             "kind": "EndpointPickerConfig",
