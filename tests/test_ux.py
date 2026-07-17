@@ -1,13 +1,14 @@
 """UX-level tests for compact YAML syntax, equations, and generated manifests."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from manifesto.cluster import load_cluster
 from manifesto.instance import Instance
-from manifesto.normalize import apply_cluster_defaults
+from manifesto.parallelism import parallel_layout
 from manifesto.render import render
 from manifesto.resolve import resolve_role
-from manifesto.spec import DpLoadBalancing, RoutingKind, load_spec
+from manifesto.spec import DeploymentSpec, DpLoadBalancing, RoutingKind, load_spec
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,13 +19,14 @@ DEEPSEEK = ROOT / "models" / "deepseek-v4" / "1P-EP8-1D-EP8.yaml"
 def test_compact_parallelism_and_equations_resolve_to_runtime_values():
     spec = load_spec(DEEPSEEK, CLUSTER)
     role = spec.role("decode")
+    layout = parallel_layout(role)
     resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)
 
     assert role.gpus_per_pod == 4
-    assert role.tensor_parallel_size == 1
-    assert role.data_parallel.enabled is True
-    assert role.data_parallel.local_size == 4
-    assert role.expert_parallel.enabled is True
+    assert role.parallelism.tp == 1
+    assert role.parallelism.dp_enabled is True
+    assert layout.dp_local_size == 4
+    assert role.parallelism.ep is True
     assert role.dp_load_balancing == DpLoadBalancing.EXTERNAL
 
     assert resolved.env["MAX_TOKENS"] == "1024"
@@ -53,8 +55,8 @@ def test_dp_is_global_and_local_dp_is_derived_from_lws_size():
     resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)
 
     assert role.lws.size == 2
-    assert role.data_parallel.local_size == 4
-    assert role.routing_sidecar is True
+    assert parallel_layout(role).dp_local_size == 4
+    assert role.routing_proxy is True
     assert role.serving_port_base == 8000
     assert role.backend_port_base == 8200
     assert resolved.env["MAX_TOKENS"] == "1024"
@@ -66,7 +68,7 @@ def test_pd_topology_adds_decode_routing_proxy_defaults():
 
     assert spec.routing.kind == RoutingKind.PD
     assert spec.routing.target_role == "decode"
-    assert role.routing_sidecar is True
+    assert role.routing_proxy is True
     assert role.serving_port_base == 8000
     assert role.backend_port_base == 8200
 
@@ -89,8 +91,8 @@ def test_prefill_tp_spans_lws_nodes():
     role = spec.role("prefill")
     resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)
 
-    assert role.tensor_parallel_size == 1
-    assert role.data_parallel.enabled is True
+    assert role.parallelism.tp == 1
+    assert role.parallelism.dp_enabled is True
     assert resolved.vllm_args["trust_remote_code"] is True
 
 
@@ -113,9 +115,12 @@ def test_cache_key_comes_from_image_identity_unless_overridden():
 
 
 def test_explicit_resource_gpu_request_overrides_inferred_request():
-    normalized = apply_cluster_defaults(
+    spec = DeploymentSpec.model_validate(
         {
-            "model": {"id": "model"},
+            "release": "gpus",
+            "topology": "aggregated",
+            "model": {"id": "model", "image": "image"},
+            "routing": {"kind": "disabled"},
             "roles": [
                 {
                     "name": "prefill",
@@ -124,13 +129,12 @@ def test_explicit_resource_gpu_request_overrides_inferred_request():
                     "resources": {"gpus": 1},
                 }
             ],
-        },
-        gpus_per_node=8,
-        hf_home="/cache",
+        }
     )
+    spec.apply_cluster_defaults(replace(CLUSTER, gpus_per_node=8))
 
-    assert normalized["roles"][0]["gpus_per_pod"] == 2
-    assert normalized["roles"][0]["resources"]["gpus"] == 1
+    assert spec.role("prefill").gpus_per_pod == 2
+    assert spec.role("prefill").resources.gpus == 1
 
 
 def test_cluster_path_templates_feed_cache_dev_and_logs():

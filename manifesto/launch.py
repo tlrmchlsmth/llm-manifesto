@@ -56,7 +56,7 @@ def build_launch_script(
     vllm_args: dict[str, Any] | None = None,
 ) -> str:
     layout = parallel_layout(role)
-    external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
+    external_dp = role.parallelism.dp_enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
     lines = [
         "set -euo pipefail",
         f"LOG_DIR={shlex.quote(log_dir)}",
@@ -82,7 +82,7 @@ def build_launch_script(
             "",
         ]
 
-    if role.data_parallel.enabled:
+    if role.parallelism.dp_enabled:
         lines += [
             f"DP_SIZE_LOCAL={layout.dp_local_size}",
             f"DP_SIZE={layout.dp_world_size}",
@@ -103,7 +103,7 @@ def build_launch_script(
     ]
     if not external_dp:
         base_args[3:3] = [["--device-ids", "$GPUS"]]
-    if role.expert_parallel.enabled:
+    if role.parallelism.ep:
         base_args.append("--enable-expert-parallel")
     if external_dp:
         dp_address = "${LWS_LEADER_ADDRESS}" if role.lws.size > 1 else "127.0.0.1"
@@ -116,7 +116,7 @@ def build_launch_script(
             "--data-parallel-multi-port-external-lb",
             ["--data-parallel-supervisor-port", "8100"],
         ]
-    elif role.data_parallel.enabled:
+    elif role.parallelism.dp_enabled:
         dp_address = "${LWS_LEADER_ADDRESS}" if role.lws.size > 1 else "127.0.0.1"
         base_args += [
             ["--data-parallel-size", "$DP_SIZE"],
