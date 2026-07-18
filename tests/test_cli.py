@@ -5,11 +5,61 @@ from pathlib import Path
 from manifesto.cli import main
 from manifesto.cluster import load_cluster
 import manifesto.workflow as workflow
+from manifesto.workflow import config_home, resolve_cluster, resolve_model
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT / "models" / "deepseek-v4" / "1P-EP8-1D-EP8.yaml"
+STANDALONE_MODEL = ROOT / "models" / "qwen" / "aggregated.yaml"
 CLUSTER = ROOT / "clusters" / "oci-gb200.yaml"
+
+
+def test_user_config_catalog_resolves_models_and_clusters(monkeypatch, tmp_path):
+    user_config = tmp_path / "manifesto-config"
+    model = user_config / "models" / "team" / "model.yaml"
+    cluster = user_config / "clusters" / "local.yaml"
+    model.parent.mkdir(parents=True)
+    cluster.parent.mkdir(parents=True)
+    model.write_text("release: local\n")
+    cluster.write_text("name: local\n")
+    monkeypatch.setenv("MANIFESTO_CONFIG_HOME", str(user_config))
+
+    assert config_home() == user_config
+    assert resolve_model("team/model") == str(model)
+    assert resolve_cluster("local") == str(cluster)
+
+
+def test_cluster_named_for_current_context_is_selected(monkeypatch, tmp_path):
+    user_config = tmp_path / "manifesto-config"
+    cluster = user_config / "clusters" / "local-context.yaml"
+    cluster.parent.mkdir(parents=True)
+    cluster.write_text("name: local\n")
+    monkeypatch.setenv("MANIFESTO_CONFIG_HOME", str(user_config))
+    monkeypatch.delenv("MANIFESTO_CLUSTER", raising=False)
+    monkeypatch.delenv("MANIFESTO_CLUSTER_MAP", raising=False)
+    monkeypatch.setattr(
+        workflow,
+        "capture",
+        lambda cmd, **_: "local-context\n" if cmd[-1] == "current-context" else "kube-cluster\n",
+    )
+
+    assert resolve_cluster() == str(cluster)
+
+
+def test_render_accepts_user_catalog_names(monkeypatch, tmp_path, capsys):
+    user_config = tmp_path / "manifesto-config"
+    model = user_config / "models" / "local-model.yaml"
+    cluster = user_config / "clusters" / "local-cluster.yaml"
+    model.parent.mkdir(parents=True)
+    cluster.parent.mkdir(parents=True)
+    model.write_text(STANDALONE_MODEL.read_text())
+    cluster.write_text(CLUSTER.read_text())
+    monkeypatch.setenv("MANIFESTO_CONFIG_HOME", str(user_config))
+
+    rc = main(["render", "local-model", "--cluster", "local-cluster", "--namespace", "test", "--user", "tester"])
+
+    assert rc == 0
+    assert "kind: Deployment" in capsys.readouterr().out
 
 
 def test_cache_path_cli_accepts_cluster_template_override(capsys):

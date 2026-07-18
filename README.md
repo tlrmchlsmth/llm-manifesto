@@ -91,6 +91,34 @@ Justfile                thin wrappers over the manifesto CLI, plus dev,
                         monitoring, and benchmark commands
 ```
 
+## User Configuration
+
+Manifesto also reads a private user catalog from
+`~/.config/llm-manifesto` (or `$XDG_CONFIG_HOME/llm-manifesto`). Keep local
+cluster and model configuration outside the repository with this layout:
+
+```text
+~/.config/llm-manifesto/
+  .env                         optional local defaults
+  clusters/
+    my-context.yaml
+  models/
+    team/model.yaml
+```
+
+Catalog entries can be referenced by name, with the `.yaml` suffix optional:
+
+```bash
+manifesto render team/model --cluster my-context
+```
+
+If a file under `clusters/` is named for the current kube context or kube
+cluster, render and deployment commands select it automatically, so
+`--cluster` can be omitted. Explicit paths and the existing
+`MANIFESTO_CLUSTER` and `MANIFESTO_CLUSTER_MAP` settings remain supported.
+Set `MANIFESTO_CONFIG_HOME` to override the entire user configuration path.
+User catalog entries take precedence over bundled entries with the same name.
+
 ## Specs
 
 Model specs live under `models/`.
