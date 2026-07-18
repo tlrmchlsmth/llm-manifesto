@@ -103,13 +103,13 @@ cluster and model configuration outside the repository with this layout:
   clusters/
     my-context.yaml
   models/
-    team/model.yaml
+    model_provider/model.yaml
 ```
 
 Catalog entries can be referenced by name, with the `.yaml` suffix optional:
 
 ```bash
-manifesto render team/model --cluster my-context
+manifesto render model_provider/model --cluster my-context
 ```
 
 If a file under `clusters/` is named for the current kube context or kube
