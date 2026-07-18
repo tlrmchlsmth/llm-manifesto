@@ -17,6 +17,10 @@ logging:
 pod_defaults:
   shm_size: 2Gi
 
+model_server_resources:
+  cpu_per_gpu: "8"
+  memory_per_gpu: 128Gi
+
 paths:
   user_root: /mnt/lustre/{user}
   cache_root: /mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{cache_key}/{release}

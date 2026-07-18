@@ -211,10 +211,26 @@ Cluster profiles own environment that should not be repeated in every model
 spec:
 
 - GPUs per node
+- model-server CPU and memory requests per GPU
 - shared and local volume mounts
 - user, log, cache, and dev venv path templates
 - llm-d release
 - UCX/NCCL/NVSHMEM/IMEX fabric env profiles
+
+When a role omits `resources.cpu` or `resources.memory`, Manifesto scales the
+request from the role's inferred GPUs per pod and the cluster policy:
+
+```yaml
+model_server_resources:
+  cpu_per_gpu: "8"
+  memory_per_gpu: 128Gi
+  node_allocatable_cpu: "128"       # optional, enables packing warnings
+  node_allocatable_memory: 2Ti      # optional, enables packing warnings
+```
+
+Explicit role resource values always win. If allocatable capacity is set,
+rendering warns when the number of role pods that fit by GPU would exceed the
+node's aggregate CPU or memory capacity.
 
 The workflow CLI requires a cluster profile for commands that render a spec. Set
 `MANIFESTO_CLUSTER` directly, pass `--cluster`, or set `MANIFESTO_CLUSTER_MAP` in

@@ -1,10 +1,16 @@
 """Tests for hard validation of impossible or contradictory role configurations."""
 
+import warnings
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
+from manifesto.cluster import load_cluster
 from manifesto.parallelism import parallel_layout
 from manifesto.spec import DeploymentSpec
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _spec_with_role(role: dict) -> dict:
@@ -193,3 +199,55 @@ def test_unknown_role_keys_are_rejected():
         DeploymentSpec.model_validate(
             _spec_with_role({"name": "decode", "parallelism": {"tp": 1, "dp_load_balancing": "external"}})
         )
+
+
+def test_warns_when_dp_replicas_fit_by_gpu_but_not_aggregate_cpu():
+    spec = DeploymentSpec.model_validate(
+        _spec_with_role(
+            {
+                "name": "prefill",
+                "lws": {"size": 1, "replicas": 4},
+                "parallelism": {"tp": 1, "dp": 2},
+            }
+        )
+    )
+    cluster = load_cluster(ROOT / "clusters" / "cks-h200.yaml")
+    cluster.model_server_resources.node_allocatable_cpu = "63"
+
+    with pytest.warns(UserWarning, match=r"4 pods fit.*16 CPU each.*64 total.*allocatable CPU 63"):
+        spec.apply_cluster_defaults(cluster)
+
+
+def test_no_warning_when_dp_replicas_fit_aggregate_cpu():
+    spec = DeploymentSpec.model_validate(
+        _spec_with_role(
+            {
+                "name": "prefill",
+                "lws": {"size": 1, "replicas": 4},
+                "parallelism": {"tp": 1, "dp": 2},
+            }
+        )
+    )
+    cluster = load_cluster(ROOT / "clusters" / "cks-h200.yaml")
+    cluster.model_server_resources.node_allocatable_cpu = "64"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        spec.apply_cluster_defaults(cluster)
+
+
+def test_warns_when_dp_replicas_fit_by_gpu_but_not_aggregate_memory():
+    spec = DeploymentSpec.model_validate(
+        _spec_with_role(
+            {
+                "name": "prefill",
+                "lws": {"size": 1, "replicas": 4},
+                "parallelism": {"tp": 1, "dp": 2},
+            }
+        )
+    )
+    cluster = load_cluster(ROOT / "clusters" / "cks-h200.yaml")
+    cluster.model_server_resources.node_allocatable_memory = "1023Gi"
+
+    with pytest.warns(UserWarning, match=r"4 pods fit.*256Gi memory each.*1024Gi total"):
+        spec.apply_cluster_defaults(cluster)

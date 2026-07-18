@@ -74,6 +74,28 @@ class PodDefaults(BaseModel):
     shm_size: str = "2Gi"
 
 
+class ModelServerResourcesConfig(BaseModel):
+    """Per-GPU requests and optional node capacities used for pod packing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cpu_per_gpu: str
+    memory_per_gpu: str
+    node_allocatable_cpu: str | None = None
+    node_allocatable_memory: str | None = None
+
+    @field_validator(
+        "cpu_per_gpu",
+        "memory_per_gpu",
+        "node_allocatable_cpu",
+        "node_allocatable_memory",
+        mode="before",
+    )
+    @classmethod
+    def coerce_quantities(cls, value: Any) -> str | None:
+        return None if value is None else str(value)
+
+
 class GatewayConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -137,6 +159,7 @@ class Cluster(BaseModel):
     rdma: RdmaConfig = Field(default_factory=RdmaConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     pod_defaults: PodDefaults = Field(default_factory=PodDefaults)
+    model_server_resources: ModelServerResourcesConfig
     fabric: FabricConfig
     llm_d: LlmdConfig = Field(default_factory=LlmdConfig)
 

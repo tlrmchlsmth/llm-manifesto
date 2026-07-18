@@ -101,6 +101,60 @@ def test_single_gpu_no_dp_role_derives_one_gpu_from_tp():
 
     assert role.gpus_per_pod == 1
     assert role.resources.gpus == 1
+    assert role.resources.cpu == "8"
+    assert role.resources.memory == "64Gi"
+
+
+def test_omitted_resources_scale_with_local_dp_gpu_shape():
+    spec = DeploymentSpec.model_validate(
+        {
+            "release": "scaled",
+            "topology": "aggregated",
+            "model": {"id": "model", "image": "image"},
+            "routing": {"kind": "disabled"},
+            "roles": [
+                {
+                    "name": "prefill",
+                    "lws": {"size": 1, "replicas": 4},
+                    "parallelism": {"tp": 1, "dp": 2},
+                }
+            ],
+        }
+    )
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.gpus_per_node = 8
+    cluster.model_server_resources.cpu_per_gpu = "8"
+    cluster.model_server_resources.memory_per_gpu = "64Gi"
+
+    spec.apply_cluster_defaults(cluster)
+
+    role = spec.role("prefill")
+    assert role.gpus_per_pod == 2
+    assert role.resources.cpu == "16"
+    assert role.resources.memory == "128Gi"
+
+
+def test_explicit_cpu_and_memory_are_preserved_exactly():
+    spec = DeploymentSpec.model_validate(
+        {
+            "release": "explicit",
+            "topology": "aggregated",
+            "model": {"id": "model", "image": "image"},
+            "routing": {"kind": "disabled"},
+            "roles": [
+                {
+                    "name": "decode",
+                    "parallelism": {"tp": 1},
+                    "resources": {"cpu": "3500m", "memory": "70Gi"},
+                }
+            ],
+        }
+    )
+
+    spec.apply_cluster_defaults(CLUSTER)
+
+    assert spec.role("decode").resources.cpu == "3500m"
+    assert spec.role("decode").resources.memory == "70Gi"
 
 
 def test_cache_key_comes_from_image_identity_unless_overridden():
