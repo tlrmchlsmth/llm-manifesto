@@ -17,6 +17,7 @@ from .spec import RoutingKind, load_spec
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CONFIG_DIR_NAME = "llm-manifesto"
 
 
 class WorkflowError(RuntimeError):
@@ -50,22 +51,56 @@ class RuntimeConfig:
         return ["kubectl", "-n", self.namespace]
 
 
-def load_dotenv(path: Path = ROOT / ".env") -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+def config_home() -> Path:
+    if configured := os.environ.get("MANIFESTO_CONFIG_HOME"):
+        return Path(configured).expanduser()
+    if xdg_home := os.environ.get("XDG_CONFIG_HOME"):
+        return Path(xdg_home).expanduser() / CONFIG_DIR_NAME
+    return Path.home() / ".config" / CONFIG_DIR_NAME
+
+
+def load_dotenv(path: Path | None = None) -> None:
+    paths = [path] if path is not None else [config_home() / ".env", ROOT / ".env"]
+    for env_path in paths:
+        if not env_path.exists():
             continue
-        if line.startswith("export "):
-            line = line.removeprefix("export ").strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("'\"")
-        if key and key not in os.environ:
-            os.environ[key] = value
+        for raw_line in env_path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line.removeprefix("export ").strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def resolve_model(value: str) -> str:
+    return _resolve_catalog_path(value, "models")
+
+
+def _resolve_catalog_path(value: str, catalog: str) -> str:
+    path = Path(value).expanduser()
+    variants = [path]
+    if not path.suffix:
+        variants.append(path.with_suffix(".yaml"))
+
+    for candidate in variants:
+        if candidate.exists():
+            return str(candidate)
+    if path.is_absolute():
+        return str(path)
+
+    for root in (config_home() / catalog, ROOT / catalog):
+        for candidate in variants:
+            resolved = root / candidate
+            if resolved.exists():
+                return str(resolved)
+    return value
 
 
 def resolve_user(explicit: str | None = None) -> str:
@@ -83,23 +118,30 @@ def resolve_namespace(explicit: str | None = None) -> str:
 
 def resolve_cluster(explicit: str | None = None) -> str:
     if explicit:
-        return explicit
+        return _resolve_catalog_path(explicit, "clusters")
     if os.environ.get("MANIFESTO_CLUSTER"):
-        return os.environ["MANIFESTO_CLUSTER"]
+        return _resolve_catalog_path(os.environ["MANIFESTO_CLUSTER"], "clusters")
     mapping = os.environ.get("MANIFESTO_CLUSTER_MAP", "")
+    context = capture(["kubectl", "config", "current-context"], check=False).strip()
+    kube_cluster = capture(
+        ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].name}"],
+        check=False,
+    ).strip()
     if mapping:
-        context = capture(["kubectl", "config", "current-context"], check=False).strip()
-        kube_cluster = capture(
-            ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].name}"],
-            check=False,
-        ).strip()
         for entry in mapping.split(","):
             key, sep, value = entry.partition("=")
             if sep and key.strip() in {context, kube_cluster}:
-                return value.strip()
+                return _resolve_catalog_path(value.strip(), "clusters")
+    for name in (context, kube_cluster):
+        if not name:
+            continue
+        candidate = _resolve_catalog_path(name, "clusters")
+        if Path(candidate).exists():
+            return candidate
     raise WorkflowError(
         "No cluster profile configured. Pass --cluster, set MANIFESTO_CLUSTER, "
-        "or add the current kube context to MANIFESTO_CLUSTER_MAP.",
+        "add the current kube context to MANIFESTO_CLUSTER_MAP, or create "
+        f"{config_home() / 'clusters' / '<context>.yaml'}.",
         code=2,
     )
 
@@ -131,7 +173,7 @@ def apply_runtime_overrides(spec, args, config: RuntimeConfig) -> None:
 
 def render_manifest(args, config: RuntimeConfig, *, routing_only: bool = False) -> str:
     cluster = load_runtime_cluster(config, args)
-    spec = load_spec(args.spec, cluster)
+    spec = load_spec(resolve_model(args.spec), cluster)
     apply_runtime_overrides(spec, args, config)
     return render_to_yaml(
         render(spec, user=config.user, cluster=cluster, routing_only=routing_only),
@@ -145,7 +187,7 @@ def manifest_header(args, config: RuntimeConfig, *, routing_only: bool) -> list[
     command = [
         "manifesto",
         "render-routing" if routing_only else "render",
-        args.spec,
+        resolve_model(args.spec),
         "--cluster",
         config.cluster_path,
         "--namespace",
@@ -211,7 +253,7 @@ def delete_file(args) -> int:
 
 def ready(args) -> int:
     config = RuntimeConfig.from_args(args, require_cluster=False)
-    spec = load_spec(args.spec)
+    spec = load_spec(resolve_model(args.spec))
     instance = Instance(user=config.user, release=spec.release)
     epp = instance.name("infpool-epp")
     routing_enabled = spec.routing.kind != RoutingKind.DISABLED

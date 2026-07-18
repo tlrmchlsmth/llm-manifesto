@@ -25,6 +25,7 @@ from .workflow import (
     render_manifest,
     render_to_file,
     resolve_cluster,
+    resolve_model,
     resolve_user,
     stop,
 )
@@ -177,13 +178,13 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _instance_id(args: argparse.Namespace) -> int:
-    spec = load_spec(args.spec)
+    spec = load_spec(resolve_model(args.spec))
     print(Instance(user=resolve_user(args.user), release=spec.release).instance_id)
     return 0
 
 
 def _name(args: argparse.Namespace) -> int:
-    spec = load_spec(args.spec)
+    spec = load_spec(resolve_model(args.spec))
     print(Instance(user=resolve_user(args.user), release=spec.release).name(args.component))
     return 0
 
@@ -191,7 +192,7 @@ def _name(args: argparse.Namespace) -> int:
 def _cache_path(args: argparse.Namespace) -> int:
     load_dotenv()
     cluster = load_cluster_with_overrides(resolve_cluster(args.cluster), args)
-    spec = load_spec(args.spec)
+    spec = load_spec(resolve_model(args.spec))
     instance = Instance(user=resolve_user(args.user), release=spec.release)
     print(
         cluster.cache_root(
@@ -208,7 +209,7 @@ def _cache_path(args: argparse.Namespace) -> int:
 def _log_path(args: argparse.Namespace) -> int:
     load_dotenv()
     cluster = load_cluster_with_overrides(resolve_cluster(args.cluster), args)
-    spec = load_spec(args.spec)
+    spec = load_spec(resolve_model(args.spec))
     instance = Instance(user=resolve_user(args.user), release=spec.release)
     print(f"{cluster.log_root(user=instance.user_slug, release=instance.release_slug)}/{args.role}")
     return 0
