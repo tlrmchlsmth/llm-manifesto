@@ -16,7 +16,7 @@ CLUSTER = ROOT / "clusters" / "oci-gb200.yaml"
 
 def test_user_config_catalog_resolves_models_and_clusters(monkeypatch, tmp_path):
     user_config = tmp_path / "manifesto-config"
-    model = user_config / "models" / "team" / "model.yaml"
+    model = user_config / "models" / "model_provider" / "model.yaml"
     cluster = user_config / "clusters" / "local.yaml"
     model.parent.mkdir(parents=True)
     cluster.parent.mkdir(parents=True)
@@ -25,7 +25,7 @@ def test_user_config_catalog_resolves_models_and_clusters(monkeypatch, tmp_path)
     monkeypatch.setenv("MANIFESTO_CONFIG_HOME", str(user_config))
 
     assert config_home() == user_config
-    assert resolve_model("team/model") == str(model)
+    assert resolve_model("model_provider/model") == str(model)
     assert resolve_cluster("local") == str(cluster)
 
 
