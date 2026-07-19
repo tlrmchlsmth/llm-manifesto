@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .equations import render_mapping
 from .images import DEFAULT_IMAGES
@@ -45,7 +45,7 @@ class CacheConfig(BaseModel):
 
     hf_host_path: str | None = None
     jit_host_path: str | None = None
-    hf_home: str = "/mnt/local/hf_cache"
+    hf_home: str | None = None
 
 
 class RdmaConfig(BaseModel):
@@ -175,6 +175,18 @@ class Cluster(BaseModel):
     fabric: FabricConfig
     llm_d: LlmdConfig = Field(default_factory=LlmdConfig)
     openshift: OpenShiftConfig = Field(default_factory=OpenShiftConfig)
+
+    @model_validator(mode="after")
+    def default_hf_home(self) -> "Cluster":
+        if self.cache.hf_home is not None:
+            return self
+        if self.cache.hf_host_path and self.cache.jit_host_path:
+            self.cache.hf_home = "/var/cache/huggingface"
+        elif self.storage.local_nvme_path:
+            self.cache.hf_home = "/mnt/local/hf_cache"
+        else:
+            self.cache.hf_home = f"{self.storage.shared_mount_path}/hf_cache"
+        return self
 
     # Path templates. Explicit profile values win; defaults derive from the
     # shared mount so they are declared exactly once.

@@ -60,11 +60,13 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
             }
         )
 
-    security_context = cluster.pod_defaults.container_security_context or {
-        "capabilities": {"add": ["IPC_LOCK", "SYS_RAWIO"]},
-        "runAsGroup": 0,
-        "runAsUser": 0,
-    }
+    security_context = cluster.pod_defaults.container_security_context
+    if security_context is None:
+        security_context = {
+            "capabilities": {"add": ["IPC_LOCK", "SYS_RAWIO"]},
+            "runAsGroup": 0,
+            "runAsUser": 0,
+        }
     vllm_container = {
         "name": "vllm",
         "image": spec.model.image,

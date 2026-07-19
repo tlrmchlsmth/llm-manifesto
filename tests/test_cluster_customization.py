@@ -65,8 +65,8 @@ def _custom_cluster(*, scc: str | None = None) -> Cluster:
     )
 
 
-def _spec() -> DeploymentSpec:
-    return DeploymentSpec.model_validate(
+def _spec(cluster: Cluster) -> DeploymentSpec:
+    spec = DeploymentSpec.model_validate(
         {
             "release": "synthetic-release",
             "namespace": "synthetic-namespace",
@@ -88,11 +88,13 @@ def _spec() -> DeploymentSpec:
             ],
         }
     )
+    spec.apply_cluster_defaults(cluster)
+    return spec
 
 
 def test_pod_defaults_render_metadata_scheduling_resources_and_security():
     cluster = _custom_cluster()
-    spec = _spec()
+    spec = _spec(cluster)
     objects = render(spec, user="tester", cluster=cluster)
     lws = next(obj for obj in objects if obj["kind"] == "LeaderWorkerSet")
     template = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]
@@ -115,7 +117,7 @@ def test_pod_defaults_render_metadata_scheduling_resources_and_security():
 
 def test_openshift_scc_binding_targets_release_service_account():
     cluster = _custom_cluster(scc="custom-driver")
-    spec = _spec()
+    spec = _spec(cluster)
     objects = render(spec, user="tester", cluster=cluster)
     service_account = next(obj for obj in objects if obj["kind"] == "ServiceAccount")
     binding = next(obj for obj in objects if obj["kind"] == "RoleBinding")
@@ -139,7 +141,7 @@ def test_role_can_override_cluster_fabric_profile():
     cluster.fabric.profiles["custom_ep"] = cluster.fabric.profiles["standard"].model_copy(
         update={"env": {"CUSTOM_FABRIC_MODE": "enabled"}}
     )
-    spec = _spec()
+    spec = _spec(cluster)
     role = spec.roles[0]
     role.fabric_profile = "custom_ep"
 
@@ -147,3 +149,22 @@ def test_role_can_override_cluster_fabric_profile():
 
     assert resolved.fabric_profile == "custom_ep"
     assert resolved.env["CUSTOM_FABRIC_MODE"] == "enabled"
+
+
+def test_shared_storage_defaults_hf_home_without_local_nvme():
+    cluster = _custom_cluster()
+    spec = _spec(cluster)
+
+    assert cluster.cache.hf_home == "/mnt/shared/hf_cache"
+    assert spec.model.hf_home == "/mnt/shared/hf_cache"
+
+
+def test_empty_container_security_context_is_preserved():
+    cluster = _custom_cluster()
+    cluster.pod_defaults.container_security_context = {}
+    spec = _spec(cluster)
+    objects = render(spec, user="tester", cluster=cluster)
+    lws = next(obj for obj in objects if obj["kind"] == "LeaderWorkerSet")
+    container = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]
+
+    assert container["securityContext"] == {}
