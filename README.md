@@ -213,6 +213,8 @@ spec:
 - GPUs per node
 - model-server CPU and memory requests per GPU
 - shared and local volume mounts
+- pod annotations, scheduling constraints, extra devices, and security context
+- RDMA extended-resource requests and OpenShift SCC authorization
 - user, log, cache, and dev venv path templates
 - llm-d release
 - UCX/NCCL/NVSHMEM/IMEX fabric env profiles
@@ -262,7 +264,22 @@ backed by separate host-local cache volumes can omit it entirely.
 
 Set `platform: openshift` for OpenShift clusters. This adds a stable `USER`
 fallback for Python libraries when containers run under an arbitrary UID,
-without affecting standard Kubernetes profiles.
+without affecting standard Kubernetes profiles. An SCC can be granted to each
+release-specific model service account:
+
+```yaml
+openshift:
+  scc: custom-scc
+```
+
+A model role can override automatic fabric selection when its backend requires
+one explicitly:
+
+```yaml
+roles:
+  - name: decode
+    fabric_profile: custom_ep
+```
 
 Select a non-default Gateway API implementation in the cluster profile:
 

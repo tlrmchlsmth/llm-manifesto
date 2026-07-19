@@ -36,7 +36,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
     context |= computed_env
     computed_vllm_args = render_mapping(role.computed.get("vllm", {}), context)
 
-    fabric_profile = cluster.fabric_profile_for(
+    fabric_profile = role.fabric_profile or cluster.fabric_profile_for(
         topology=spec.topology.value,
         role_name=role.name,
         expert_parallel=role.parallelism.ep,

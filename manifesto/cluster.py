@@ -22,7 +22,7 @@ class StorageConfig(BaseModel):
 
     shared_volume: dict[str, Any] | None = None
     shared_mount_path: str = "/mnt/shared"
-    local_nvme_path: str = "/mnt/numa0"
+    local_nvme_path: str | None = "/mnt/numa0"
 
 
 class PathsConfig(BaseModel):
@@ -72,6 +72,12 @@ class PodDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     shm_size: str = "2Gi"
+    annotations: dict[str, str] = Field(default_factory=dict)
+    affinity: dict[str, Any] = Field(default_factory=dict)
+    tolerations: list[dict[str, Any]] = Field(default_factory=list)
+    extra_volumes: list[dict[str, Any]] = Field(default_factory=list)
+    extra_volume_mounts: list[dict[str, Any]] = Field(default_factory=list)
+    container_security_context: dict[str, Any] | None = None
 
 
 class ModelServerResourcesConfig(BaseModel):
@@ -145,6 +151,12 @@ class LlmdConfig(BaseModel):
         return template.format(release=release)
 
 
+class OpenShiftConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scc: str | None = None
+
+
 class Cluster(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -162,6 +174,7 @@ class Cluster(BaseModel):
     model_server_resources: ModelServerResourcesConfig
     fabric: FabricConfig
     llm_d: LlmdConfig = Field(default_factory=LlmdConfig)
+    openshift: OpenShiftConfig = Field(default_factory=OpenShiftConfig)
 
     # Path templates. Explicit profile values win; defaults derive from the
     # shared mount so they are declared exactly once.
@@ -250,20 +263,24 @@ class Cluster(BaseModel):
         else:
             if not self.storage.shared_volume:
                 raise ValueError("storage.shared_volume is required when host caches are not configured")
-            volumes.extend(
-                [
-                    {"name": "shared-storage", **self.storage.shared_volume},
-                    {"name": "local-nvme", "hostPath": {"path": self.storage.local_nvme_path, "type": "Directory"}},
-                ]
-            )
+            volumes.append({"name": "shared-storage", **self.storage.shared_volume})
+            if self.storage.local_nvme_path:
+                volumes.append(
+                    {
+                        "name": "local-nvme",
+                        "hostPath": {"path": self.storage.local_nvme_path, "type": "Directory"},
+                    }
+                )
         if self.logging.pvc and self.logging.mount_path not in self._base_mount_paths():
             volumes.append({"name": "logs", "persistentVolumeClaim": {"claimName": self.logging.pvc}})
+        volumes.extend(self.pod_defaults.extra_volumes)
         return volumes
 
     def volume_mounts(self) -> list[dict]:
         mounts = self._base_volume_mounts()
         if self.logging.pvc and self.logging.mount_path not in self._base_mount_paths():
             mounts.append({"name": "logs", "mountPath": self.logging.mount_path})
+        mounts.extend(self.pod_defaults.extra_volume_mounts)
         return mounts
 
     def _base_mount_paths(self) -> set[str]:
@@ -276,11 +293,13 @@ class Cluster(BaseModel):
                 {"name": "hf-cache", "mountPath": "/var/cache/huggingface"},
                 {"name": "jit-cache", "mountPath": "/var/cache/vllm"},
             ]
-        return [
+        mounts = [
             {"name": "dshm", "mountPath": "/dev/shm"},
             {"name": "shared-storage", "mountPath": self.storage.shared_mount_path},
-            {"name": "local-nvme", "mountPath": "/mnt/local"},
         ]
+        if self.storage.local_nvme_path:
+            mounts.append({"name": "local-nvme", "mountPath": "/mnt/local"})
+        return mounts
 
     def fabric_profile_for(self, *, topology: str, role_name: str, expert_parallel: bool) -> str:
         if not expert_parallel:
