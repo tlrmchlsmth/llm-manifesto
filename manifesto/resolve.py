@@ -90,7 +90,7 @@ def _base_env(spec: DeploymentSpec, cache_prefix: str, *, dev_venv: str, platfor
         "HF_HOME": spec.model.hf_home,
         "HOME": f"{cache_prefix}/home",
         "XDG_CACHE_HOME": f"{cache_prefix}/xdg",
-        "VLLM_DEV_VENV": dev_venv,
+        "MANIFESTO_VLLM_DEV_VENV": dev_venv,
         "VLLM_NO_USAGE_STATS": "1",
         "TQDM_DISABLE": "1",
         "VLLM_LOGGING_LEVEL": "INFO",

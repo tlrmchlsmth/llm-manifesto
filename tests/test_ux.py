@@ -208,7 +208,7 @@ def test_cluster_path_templates_feed_cache_dev_and_logs():
     lws = next(obj for obj in objects if obj["kind"] == "LeaderWorkerSet" and obj["metadata"]["name"].endswith("decode"))
     script = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]["args"][0]
 
-    assert resolved.env["VLLM_DEV_VENV"] == "/venvs/tester-name/wide-ep-1p-ep8-1d-ep8"
+    assert resolved.env["MANIFESTO_VLLM_DEV_VENV"] == "/venvs/tester-name/wide-ep-1p-ep8-1d-ep8"
     assert resolved.env["VLLM_CACHE_ROOT"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/vllm"
     assert resolved.env["HOME"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/home"
     assert "USER" not in resolved.env
@@ -237,6 +237,6 @@ def test_pre_launch_hooks_run_before_rank_launch_setup():
     lws = next(obj for obj in objects if obj["kind"] == "LeaderWorkerSet" and obj["metadata"]["name"].endswith("decode"))
     script = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]["args"][0]
 
-    assert script.index("source \"${VLLM_DEV_VENV}/bin/activate\"") < script.index("echo runtime-hook")
+    assert script.index("source \"${MANIFESTO_VLLM_DEV_VENV}/bin/activate\"") < script.index("echo runtime-hook")
     assert script.index("echo runtime-hook") < script.index("echo role-hook")
     assert script.index("echo role-hook") < script.index("DP_SIZE_LOCAL=4")

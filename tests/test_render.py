@@ -75,6 +75,17 @@ def test_dp_ports_feed_container_readiness_and_inferencepool():
     assert "  --enable-eplb False" not in script
 
 
+def test_manifesto_runtime_env_uses_its_own_namespace():
+    objects = _objects(DEEPSEEK)
+    lws = _find(objects, "LeaderWorkerSet", "decode")
+    container = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+
+    assert env["MANIFESTO_VLLM_DEV_VENV"] == ""
+    assert "VLLM_DEV_VENV" not in env
+    assert "VLLM_MOE_DP_CHUNK_SIZE" not in env
+
+
 def test_deepseek_lws_uses_short_workload_names_with_full_instance_labels():
     objects = _objects(DEEPSEEK)
     decode = _find(objects, "LeaderWorkerSet", "decode")
