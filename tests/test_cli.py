@@ -117,7 +117,7 @@ def test_render_cli_dev_venv_override(monkeypatch, capsys):
     )
 
     assert rc == 0
-    assert "name: VLLM_DEV_VENV\n            value: /custom/venv" in capsys.readouterr().out
+    assert "name: MANIFESTO_VLLM_DEV_VENV\n            value: /custom/venv" in capsys.readouterr().out
 
 
 def test_render_cli_prefixes_manifest_with_generation_command(monkeypatch, capsys):
