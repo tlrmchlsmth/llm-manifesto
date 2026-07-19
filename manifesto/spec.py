@@ -105,6 +105,7 @@ class RoleSpec(BaseModel):
         default_factory=dict, validation_alias=AliasChoices("vllm", "vllm_args")
     )
     env: dict[str, str] = Field(default_factory=dict)
+    fabric_profile: str | None = None
     pre_launch: list[str] = Field(default_factory=list)
     vars: dict[str, Any] = Field(default_factory=dict)
     computed: dict[str, dict[str, Any]] = Field(default_factory=dict)

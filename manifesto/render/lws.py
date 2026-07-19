@@ -60,16 +60,18 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
             }
         )
 
+    security_context = cluster.pod_defaults.container_security_context
+    if security_context is None:
+        security_context = {
+            "capabilities": {"add": ["IPC_LOCK", "SYS_RAWIO"]},
+            "runAsGroup": 0,
+            "runAsUser": 0,
+        }
     vllm_container = {
         "name": "vllm",
         "image": spec.model.image,
         "imagePullPolicy": "Always",
-        # TODO(security): make these capabilities/runAsRoot explicit strategy knobs instead of the default.
-        "securityContext": {
-            "capabilities": {"add": ["IPC_LOCK", "SYS_RAWIO"]},
-            "runAsGroup": 0,
-            "runAsUser": 0,
-        },
+        "securityContext": security_context,
         "command": ["/bin/bash", "-c"],
         "args": [
             build_launch_script(
@@ -132,6 +134,9 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
         "llm-d.ai/model": spec.model.label_value,
         "llm-d.ai/deployment": spec.topology.value,
     }
+    pod_metadata = {"labels": pod_labels}
+    if cluster.pod_defaults.annotations:
+        pod_metadata["annotations"] = cluster.pod_defaults.annotations
 
     pod_spec = {
         "serviceAccountName": instance.name("model-server"),
@@ -139,6 +144,10 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
         "volumes": volumes,
         "containers": [vllm_container, *containers],
     }
+    if cluster.pod_defaults.affinity:
+        pod_spec["affinity"] = cluster.pod_defaults.affinity
+    if cluster.pod_defaults.tolerations:
+        pod_spec["tolerations"] = cluster.pod_defaults.tolerations
     if init_containers:
         pod_spec["initContainers"] = init_containers
     if resolved.resource_claims:
@@ -161,7 +170,7 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
                     "rollingUpdate": {"maxSurge": 0, "maxUnavailable": "100%"},
                 },
                 "template": {
-                    "metadata": {"labels": pod_labels},
+                    "metadata": pod_metadata,
                     "spec": pod_spec,
                 },
             },
@@ -188,7 +197,7 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
             "leaderWorkerTemplate": {
                 "size": role.lws.size,
                 "workerTemplate": {
-                    "metadata": {"labels": pod_labels},
+                    "metadata": pod_metadata,
                     "spec": pod_spec,
                 },
             },
