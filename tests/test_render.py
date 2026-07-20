@@ -46,6 +46,54 @@ def test_rendered_launch_script_uses_literal_yaml_block():
     assert "\\nexec vllm serve" not in rendered
 
 
+def test_nixl_roles_advertise_their_pod_ip():
+    objects = _objects(DEEPSEEK)
+
+    for role in ("decode", "prefill"):
+        workload = _find(objects, "LeaderWorkerSet", role)
+        container = workload["spec"]["leaderWorkerTemplate"]["workerTemplate"][
+            "spec"
+        ]["containers"][0]
+        env = {item["name"]: item for item in container["env"]}
+
+        assert env["VLLM_NIXL_SIDE_CHANNEL_HOST"] == {
+            "name": "VLLM_NIXL_SIDE_CHANNEL_HOST",
+            "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}},
+        }
+
+
+def test_explicit_nixl_side_channel_host_is_preserved():
+    spec = load_spec(ROOT / "models" / DEEPSEEK, CLUSTER)
+    spec.role("decode").env["VLLM_NIXL_SIDE_CHANNEL_HOST"] = "nixl.example.test"
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    workload = _find(objects, "LeaderWorkerSet", "decode")
+    container = workload["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"][
+        "containers"
+    ][0]
+    matching = [
+        item
+        for item in container["env"]
+        if item["name"] == "VLLM_NIXL_SIDE_CHANNEL_HOST"
+    ]
+
+    assert matching == [{"name": "VLLM_NIXL_SIDE_CHANNEL_HOST", "value": "nixl.example.test"}]
+
+
+def test_non_nixl_role_does_not_get_side_channel_host():
+    spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
+    spec.role("decode").kv_transfer_config = {
+        "kv_connector": "LMCacheConnectorV1",
+    }
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    workload = _find(objects, "Deployment", "decode")
+    container = workload["spec"]["template"]["spec"]["containers"][0]
+
+    assert not any(
+        item["name"] == "VLLM_NIXL_SIDE_CHANNEL_HOST"
+        for item in container["env"]
+    )
+
+
 def test_dp_ports_feed_container_readiness_and_inferencepool():
     objects = _objects(DEEPSEEK)
     lws = _find(objects, "LeaderWorkerSet", "decode")
