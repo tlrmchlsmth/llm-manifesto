@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .common import env_list, secret_env
+from typing import Any
+
+from .common import env_list, field_ref_env, secret_env
 from .sidecars import sidecars
 from ..cluster import Cluster
 from ..instance import Instance
@@ -67,6 +69,18 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
             "runAsGroup": 0,
             "runAsUser": 0,
         }
+    container_env = [
+        secret_env("HF_TOKEN", "hf-secret", "HF_TOKEN"),
+        *env_list(resolved.env),
+    ]
+    if (
+        _uses_nixl_connector(role.kv_transfer_config)
+        and "VLLM_NIXL_SIDE_CHANNEL_HOST" not in resolved.env
+    ):
+        container_env.append(
+            field_ref_env("VLLM_NIXL_SIDE_CHANNEL_HOST", "status.podIP")
+        )
+
     vllm_container = {
         "name": "vllm",
         "image": spec.model.image,
@@ -83,7 +97,7 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
                 vllm_args=resolved.vllm_args,
             )
         ],
-        "env": [secret_env("HF_TOKEN", "hf-secret", "HF_TOKEN"), *env_list(resolved.env)],
+        "env": container_env,
         "ports": container_ports,
         "readinessProbe": {
             "exec": {
@@ -203,3 +217,14 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
             },
         },
     }
+
+
+def _uses_nixl_connector(value: Any) -> bool:
+    if isinstance(value, dict):
+        connector = value.get("kv_connector")
+        if isinstance(connector, str) and "nixl" in connector.casefold():
+            return True
+        return any(_uses_nixl_connector(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_uses_nixl_connector(item) for item in value)
+    return False
