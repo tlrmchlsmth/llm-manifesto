@@ -43,6 +43,10 @@ def sidecars(names: list[str], *, dcgm_config_name: str = "dcgm-custom-metrics")
             }
         )
     if "node-exporter" in names:
+        volumes.extend([
+            {"name": "sys", "hostPath": {"path": "/sys", "type": "Directory"}},
+            {"name": "proc", "hostPath": {"path": "/proc", "type": "Directory"}},
+        ])
         containers.append(
             {
                 "name": "node-exporter",
