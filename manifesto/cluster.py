@@ -256,8 +256,6 @@ class Cluster(BaseModel):
     def base_volumes(self) -> list[dict]:
         volumes = [
             {"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": self.pod_defaults.shm_size}},
-            {"name": "sys", "hostPath": {"path": "/sys", "type": "Directory"}},
-            {"name": "proc", "hostPath": {"path": "/proc", "type": "Directory"}},
         ]
         if self.cache.hf_host_path and self.cache.jit_host_path:
             volumes.extend(
