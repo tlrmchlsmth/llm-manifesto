@@ -380,11 +380,12 @@ prometheus:
 load-dashboards:
   #!/usr/bin/env bash
   set -euo pipefail
-  for f in "{{MONITORING_DIR}}"/*.json; do
+  for f in "{{MONITORING_DIR}}"/*dashboard.json "{{MONITORING_DIR}}"/*dashboard.yaml "{{MONITORING_DIR}}"/*dashboard.yml; do
     [ -f "$f" ] || continue
-    NAME=$(basename "$f" .json)
+    FILENAME=$(basename "$f")
+    NAME=${FILENAME%.*}
     echo "Creating ConfigMap for dashboard: $NAME"
-    {{KN}} create configmap "grafana-dashboard-$NAME" --from-file="$NAME.json=$f" --dry-run=client -o yaml | \
+    {{KN}} create configmap "grafana-dashboard-$NAME" --from-file="$FILENAME=$f" --dry-run=client -o yaml | \
       {{KN}} label -f - --local -o yaml grafana_dashboard=1 | \
       {{KN}} apply -f -
   done
