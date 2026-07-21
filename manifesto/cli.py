@@ -27,6 +27,7 @@ from .workflow import (
     resolve_cluster,
     resolve_model,
     resolve_user,
+    servers,
     stop,
 )
 
@@ -84,6 +85,12 @@ def _add_ready_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--namespace")
     parser.add_argument("--user")
     parser.add_argument("--gateway-timeout", type=int, default=120)
+
+
+def _completion(args: argparse.Namespace) -> int:
+    scripts = {"bash": _BASH_COMPLETION, "zsh": _ZSH_COMPLETION}
+    sys.stdout.write(scripts[args.shell])
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -160,14 +167,32 @@ def main(argv: list[str] | None = None) -> int:
     _add_render_args(deploy_routing_parser)
     deploy_routing_parser.set_defaults(func=lambda args: deploy(args, routing_only=True))
 
-    stop_parser = sub.add_parser("stop", help="render a spec and delete its objects from the cluster")
-    _add_render_args(stop_parser)
+    servers_parser = sub.add_parser("servers", help="list live Manifesto servers in the namespace")
+    servers_parser.add_argument("--namespace")
+    servers_parser.add_argument("--instance")
+    servers_parser.add_argument("--output", choices=["table", "name", "json"], default="table")
+    servers_parser.set_defaults(func=servers)
+
+    stop_parser = sub.add_parser("stop", help="discover and delete a live Manifesto server")
+    stop_parser.add_argument("spec", nargs="?")
+    stop_parser.add_argument("--instance")
+    stop_parser.add_argument("--namespace")
+    stop_parser.add_argument("--user")
+    # Retain legacy render flags as accepted no-ops now that stop discovers live state.
+    for legacy_flag in ("--cluster", "--user-root", "--log-root", "--cache-root", "--dev-venv", "--dev-source"):
+        stop_parser.add_argument(legacy_flag, help=argparse.SUPPRESS)
+    stop_parser.add_argument("--dev", action="store_true", help=argparse.SUPPRESS)
+    stop_parser.add_argument("--pre-launch", action="append", default=[], help=argparse.SUPPRESS)
     stop_parser.add_argument("--now", action="store_true")
     stop_parser.set_defaults(func=stop)
 
     ready_parser = sub.add_parser("ready", help="wait for model pods and gateway readiness")
     _add_ready_args(ready_parser)
     ready_parser.set_defaults(func=ready)
+
+    completion_parser = sub.add_parser("completion", help="print shell completion setup")
+    completion_parser.add_argument("shell", choices=["bash", "zsh"])
+    completion_parser.set_defaults(func=_completion)
 
     try:
         args = parser.parse_args(argv)
@@ -233,6 +258,86 @@ def _render_dev_pod(args: argparse.Namespace) -> int:
     cluster = load_cluster_with_overrides(resolve_cluster(args.cluster), args)
     sys.stdout.write(render_to_yaml([render_dev_pod(cluster, resolve_user(args.user))]))
     return 0
+
+
+_BASH_COMPLETION = r'''_manifesto_complete() {
+  local cur prev command namespace i
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  command="${COMP_WORDS[1]}"
+  namespace=""
+  for ((i=1; i<COMP_CWORD; i++)); do
+    if [[ "${COMP_WORDS[i]}" == "--namespace" ]]; then
+      namespace="${COMP_WORDS[i+1]}"
+    fi
+  done
+
+  if [[ "$prev" == "--instance" ]]; then
+    local namespace_args=()
+    [[ -n "$namespace" ]] && namespace_args=(--namespace "$namespace")
+    COMPREPLY=( $(compgen -W "$(manifesto servers "${namespace_args[@]}" --output name 2>/dev/null)" -- "$cur") )
+    return
+  fi
+  if [[ "$command" == "stop" && "$cur" != -* ]]; then
+    COMPREPLY=( $(compgen -f -- "$cur") )
+    return
+  fi
+  if [[ "$cur" == -* ]]; then
+    COMPREPLY=( $(compgen -W "--namespace --user --instance --now --output" -- "$cur") )
+    return
+  fi
+  if [[ $COMP_CWORD -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "render render-routing instance-id name cache-path log-path dev-path render-dev-pod render-file edit-file diff apply delete deploy deploy-routing servers stop ready completion" -- "$cur") )
+  fi
+}
+complete -F _manifesto_complete manifesto
+'''
+
+
+_ZSH_COMPLETION = r'''#compdef manifesto
+_manifesto_live_instances() {
+  local -a ids namespace_args
+  local i
+  for ((i=1; i <= $#words; i++)); do
+    if [[ "$words[i]" == "--namespace" && -n "$words[i+1]" ]]; then
+      namespace_args=(--namespace "$words[i+1]")
+    fi
+  done
+  ids=("${(@f)$(manifesto servers $namespace_args --output name 2>/dev/null)}")
+  _describe 'live Manifesto server' ids
+}
+
+_manifesto() {
+  local context state line
+  typeset -A opt_args
+  _arguments -C \
+    '1:command:(render render-routing instance-id name cache-path log-path dev-path render-dev-pod render-file edit-file diff apply delete deploy deploy-routing servers stop ready completion)' \
+    '*::argument:->args'
+
+  case "$words[2]" in
+    stop)
+      _arguments \
+        '1:deployment spec:_files -g "*.yaml"' \
+        '--instance[live instance ID]:instance:_manifesto_live_instances' \
+        '--namespace[Kubernetes namespace]:namespace:' \
+        '--user[instance owner]:user:' \
+        '--now[force immediate deletion]'
+      ;;
+    servers)
+      _arguments \
+        '--instance[live instance ID]:instance:_manifesto_live_instances' \
+        '--namespace[Kubernetes namespace]:namespace:' \
+        '--output[output format]:format:(table name json)'
+      ;;
+    completion)
+      _values 'shell' bash zsh
+      ;;
+  esac
+}
+
+compdef _manifesto manifesto
+'''
 
 
 if __name__ == "__main__":

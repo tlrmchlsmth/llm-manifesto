@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .cluster import load_cluster
@@ -18,6 +21,25 @@ from .spec import RoutingKind, load_spec
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR_NAME = "llm-manifesto"
+
+# Stateless teardown allowlist. Keep this in sync with the label-bearing objects
+# emitted by manifesto.render. Values are kubectl resource names as reported by
+# ``kubectl api-resources -o name``.
+MANAGED_RESOURCE_TYPES = {
+    ("v1", "ConfigMap"): "configmaps",
+    ("v1", "Service"): "services",
+    ("v1", "ServiceAccount"): "serviceaccounts",
+    ("apps/v1", "Deployment"): "deployments.apps",
+    ("gateway.networking.k8s.io/v1", "Gateway"): "gateways.gateway.networking.k8s.io",
+    ("gateway.networking.k8s.io/v1", "HTTPRoute"): "httproutes.gateway.networking.k8s.io",
+    ("inference.networking.k8s.io/v1", "InferencePool"): "inferencepools.inference.networking.k8s.io",
+    ("leaderworkerset.x-k8s.io/v1", "LeaderWorkerSet"): "leaderworkersets.leaderworkerset.x-k8s.io",
+    ("networking.istio.io/v1", "DestinationRule"): "destinationrules.networking.istio.io",
+    ("rbac.authorization.k8s.io/v1", "Role"): "roles.rbac.authorization.k8s.io",
+    ("rbac.authorization.k8s.io/v1", "RoleBinding"): "rolebindings.rbac.authorization.k8s.io",
+}
+POD_RESOURCE_TYPE = "pods"
+MANIFESTO_SELECTOR = "app.kubernetes.io/name=manifesto"
 
 
 class WorkflowError(RuntimeError):
@@ -49,6 +71,121 @@ class RuntimeConfig:
 
     def kubectl(self) -> list[str]:
         return ["kubectl", "-n", self.namespace]
+
+
+@dataclass(frozen=True)
+class LiveResource:
+    api_version: str
+    kind: str
+    name: str
+    labels: dict[str, str]
+    creation_timestamp: str | None = None
+    deletion_timestamp: str | None = None
+    ready: bool = False
+
+    @classmethod
+    def from_object(cls, obj: dict) -> "LiveResource":
+        metadata = obj.get("metadata", {})
+        ready = any(
+            condition.get("type") == "Ready" and condition.get("status") == "True"
+            for condition in obj.get("status", {}).get("conditions", [])
+        )
+        return cls(
+            api_version=obj.get("apiVersion", ""),
+            kind=obj.get("kind", ""),
+            name=metadata.get("name", ""),
+            labels=metadata.get("labels", {}),
+            creation_timestamp=metadata.get("creationTimestamp"),
+            deletion_timestamp=metadata.get("deletionTimestamp"),
+            ready=ready,
+        )
+
+    @property
+    def instance_id(self) -> str | None:
+        return self.labels.get("app.kubernetes.io/instance")
+
+    @property
+    def kubectl_ref(self) -> str:
+        if self.kind == "Pod":
+            resource_type = POD_RESOURCE_TYPE
+        else:
+            resource_type = MANAGED_RESOURCE_TYPES.get((self.api_version, self.kind))
+        if not resource_type:
+            raise WorkflowError(f"unsupported managed resource: {self.api_version} {self.kind}")
+        return f"{resource_type}/{self.name}"
+
+
+@dataclass(frozen=True)
+class ServerRecord:
+    instance_id: str
+    resources: tuple[LiveResource, ...]
+
+    @property
+    def pods(self) -> tuple[LiveResource, ...]:
+        return tuple(resource for resource in self.resources if resource.kind == "Pod")
+
+    @property
+    def model(self) -> str:
+        return next(
+            (resource.labels["llm-d.ai/model"] for resource in self.resources if "llm-d.ai/model" in resource.labels),
+            "-",
+        )
+
+    @property
+    def roles(self) -> str:
+        roles = sorted(
+            {resource.labels["llm-d.ai/role"] for resource in self.resources if "llm-d.ai/role" in resource.labels}
+        )
+        return ",".join(roles) or "-"
+
+    @property
+    def pod_readiness(self) -> str:
+        return f"{sum(pod.ready for pod in self.pods)}/{len(self.pods)}"
+
+    @property
+    def state(self) -> str:
+        if any(resource.deletion_timestamp for resource in self.resources):
+            return "Stopping"
+        if not self.pods:
+            return "Pending"
+        ready = sum(pod.ready for pod in self.pods)
+        if ready == len(self.pods):
+            return "Ready"
+        if ready:
+            return "Degraded"
+        return "Starting"
+
+    @property
+    def age(self) -> str:
+        timestamps = [resource.creation_timestamp for resource in self.resources if resource.creation_timestamp]
+        if not timestamps:
+            return "-"
+        try:
+            created = min(datetime.fromisoformat(value.replace("Z", "+00:00")) for value in timestamps)
+        except ValueError:
+            return "-"
+        seconds = max(0, int((datetime.now(timezone.utc) - created).total_seconds()))
+        if seconds < 60:
+            return f"{seconds}s"
+        if seconds < 3600:
+            return f"{seconds // 60}m"
+        if seconds < 86400:
+            return f"{seconds // 3600}h"
+        return f"{seconds // 86400}d"
+
+    def as_dict(self) -> dict:
+        return {
+            "instance": self.instance_id,
+            "state": self.state,
+            "model": self.model,
+            "roles": self.roles.split(",") if self.roles != "-" else [],
+            "pods": {"ready": sum(pod.ready for pod in self.pods), "total": len(self.pods)},
+            "age": self.age,
+            "resources": [
+                {"apiVersion": resource.api_version, "kind": resource.kind, "name": resource.name}
+                for resource in sorted(self.resources, key=lambda item: (item.kind, item.name))
+            ],
+        }
 
 
 def config_home() -> Path:
@@ -224,13 +361,210 @@ def deploy(args, *, routing_only: bool = False) -> int:
     return run([*config.kubectl(), "apply", "-f", "-"], input_text=manifest)
 
 
+def discover_live_resources(config: RuntimeConfig, *, instance_id: str | None = None) -> list[LiveResource]:
+    available = set(
+        capture(
+            ["kubectl", "api-resources", "--namespaced=true", "--verbs=list,delete", "-o", "name"]
+        ).splitlines()
+    )
+    resource_types = sorted(set(MANAGED_RESOURCE_TYPES.values()) & available)
+    if POD_RESOURCE_TYPE in available:
+        resource_types.append(POD_RESOURCE_TYPE)
+    if not resource_types:
+        raise WorkflowError("No Manifesto-managed Kubernetes resource types are available in this cluster.")
+
+    selector = MANIFESTO_SELECTOR
+    if instance_id:
+        selector += f",app.kubernetes.io/instance={instance_id}"
+    raw = capture([*config.kubectl(), "get", ",".join(resource_types), "-l", selector, "-o", "json"])
+    try:
+        objects = json.loads(raw).get("items", [])
+    except (AttributeError, json.JSONDecodeError) as exc:
+        raise WorkflowError(f"kubectl returned invalid discovery data: {exc}") from exc
+    return [LiveResource.from_object(obj) for obj in objects]
+
+
+def group_servers(resources: list[LiveResource]) -> list[ServerRecord]:
+    grouped: dict[str, list[LiveResource]] = {}
+    for resource in resources:
+        if resource.instance_id:
+            grouped.setdefault(resource.instance_id, []).append(resource)
+    return [
+        ServerRecord(instance_id=instance_id, resources=tuple(grouped[instance_id]))
+        for instance_id in sorted(grouped)
+    ]
+
+
+def servers(args) -> int:
+    config = RuntimeConfig.from_args(args, require_cluster=False)
+    records = group_servers(discover_live_resources(config, instance_id=args.instance))
+    if args.instance:
+        records = [record for record in records if record.instance_id == args.instance]
+
+    if args.output == "name":
+        for record in records:
+            print(record.instance_id)
+        return 0
+    if args.output == "json":
+        print(json.dumps([record.as_dict() for record in records], indent=2))
+        return 0
+
+    print_server_table(records)
+    if args.instance and records:
+        print("\nResources:")
+        for resource in sorted(records[0].resources, key=lambda item: (item.kind, item.name)):
+            print(f"  {resource.kind:<20} {resource.name}")
+    return 0
+
+
+def print_server_table(records: list[ServerRecord], *, numbered: bool = False) -> None:
+    headers = ("#", "INSTANCE", "STATE", "MODEL", "ROLES", "PODS", "AGE") if numbered else (
+        "INSTANCE",
+        "STATE",
+        "MODEL",
+        "ROLES",
+        "PODS",
+        "AGE",
+    )
+    rows = [
+        ((str(index),) if numbered else ())
+        + (record.instance_id, record.state, record.model, record.roles, record.pod_readiness, record.age)
+        for index, record in enumerate(records, start=1)
+    ]
+    widths = [max(len(header), *(len(row[idx]) for row in rows)) for idx, header in enumerate(headers)]
+    print("  ".join(header.ljust(widths[idx]) for idx, header in enumerate(headers)).rstrip())
+    for row in rows:
+        print("  ".join(value.ljust(widths[idx]) for idx, value in enumerate(row)).rstrip())
+
+
 def stop(args) -> int:
-    config = RuntimeConfig.from_args(args)
-    manifest = render_manifest(args, config)
-    cmd = [*config.kubectl(), "delete", "-f", "-", "--ignore-not-found=true"]
-    if args.now:
+    config = RuntimeConfig.from_args(args, require_cluster=False)
+    if args.spec and args.instance:
+        raise WorkflowError("Pass either SPEC or --instance, not both.", code=2)
+
+    resources: list[LiveResource] | None = None
+    if args.spec:
+        spec = load_spec(resolve_model(args.spec))
+        instance_id = Instance(user=config.user, release=spec.release).instance_id
+    elif args.instance:
+        instance_id = args.instance
+    else:
+        if not sys.stdin.isatty():
+            raise WorkflowError(
+                "No server target provided. Pass SPEC or --instance ID; interactive selection requires a TTY.",
+                code=2,
+            )
+        records = group_servers(discover_live_resources(config))
+        if not records:
+            print(f"No running Manifesto servers found in namespace {config.namespace}.")
+            return 0
+        selected = pick_server(records, config)
+        if selected is None:
+            print("Teardown canceled.")
+            return 130
+        instance_id = selected.instance_id
+        resources = list(selected.resources)
+
+    resources = resources if resources is not None else discover_live_resources(config, instance_id=instance_id)
+    return delete_instance(config, instance_id, resources, now=args.now)
+
+
+def pick_server(records: list[ServerRecord], config: RuntimeConfig) -> ServerRecord | None:
+    if shutil.which("fzf"):
+        lines = [
+            "\t".join(
+                (record.instance_id, record.state, record.model, record.roles, record.pod_readiness, record.age)
+            )
+            for record in records
+        ]
+        preview = shlex.join(
+            [
+                sys.executable,
+                "-m",
+                "manifesto.cli",
+                "servers",
+                "--namespace",
+                config.namespace,
+                "--instance",
+                "{1}",
+            ]
+        )
+        proc = subprocess.run(
+            [
+                "fzf",
+                "--delimiter=\\t",
+                "--with-nth=1..",
+                "--header=INSTANCE  STATE  MODEL  ROLES  PODS  AGE",
+                f"--preview={preview}",
+                "--preview-window=right,55%",
+                "--prompt=Stop server> ",
+            ],
+            input="\n".join(lines) + "\n",
+            text=True,
+            stdout=subprocess.PIPE,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        instance_id = proc.stdout.split("\t", 1)[0].strip()
+        return next((record for record in records if record.instance_id == instance_id), None)
+
+    print_server_table(records, numbered=True)
+    while True:
+        choice = input(f"Select server to stop [1-{len(records)}] (q to cancel): ").strip()
+        if choice.casefold() in {"q", "quit"}:
+            return None
+        if choice.isdigit() and 1 <= int(choice) <= len(records):
+            return records[int(choice) - 1]
+        print("Invalid selection.")
+
+
+def delete_instance(
+    config: RuntimeConfig,
+    instance_id: str,
+    resources: list[LiveResource],
+    *,
+    now: bool,
+) -> int:
+    if not resources:
+        print(f"Manifesto server {instance_id} is already absent from namespace {config.namespace}.")
+        return 0
+
+    top_level = sorted(
+        (resource.kubectl_ref for resource in resources if resource.kind != "Pod")
+    )
+    print(
+        f"Stopping {instance_id} in namespace {config.namespace} "
+        f"({len(top_level)} resources, {sum(resource.kind == 'Pod' for resource in resources)} pods)..."
+    )
+    cmd = [*config.kubectl(), "delete", *top_level, "--ignore-not-found=true"]
+    if now:
         cmd.extend(["--grace-period=0", "--force"])
-    return run(cmd, input_text=manifest)
+    rc = run(cmd) if top_level else 0
+
+    remaining = discover_live_resources(config, instance_id=instance_id)
+    if rc:
+        print(f"Teardown incomplete for {instance_id}; resources still present:", file=sys.stderr)
+        for resource in sorted(remaining, key=lambda item: (item.kind, item.name)):
+            print(f"  {resource.kind}/{resource.name}", file=sys.stderr)
+        return rc
+
+    pods = sorted(resource.kubectl_ref for resource in remaining if resource.kind == "Pod")
+    if pods:
+        pod_cmd = [*config.kubectl(), "delete", *pods, "--ignore-not-found=true"]
+        if now:
+            pod_cmd.extend(["--grace-period=0", "--force"])
+        rc = max(rc, run(pod_cmd))
+
+    leftovers = discover_live_resources(config, instance_id=instance_id)
+    if leftovers:
+        print(f"Teardown incomplete for {instance_id}; resources still present:", file=sys.stderr)
+        for resource in sorted(leftovers, key=lambda item: (item.kind, item.name)):
+            print(f"  {resource.kind}/{resource.name}", file=sys.stderr)
+        return rc or 1
+    if rc:
+        return rc
+    print(f"Stopped {instance_id}.")
+    return 0
 
 
 def diff_file(args) -> int:

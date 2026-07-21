@@ -1,17 +1,51 @@
 """CLI regression tests for derived paths, overrides, and routing-only rendering."""
 
+import json
 from pathlib import Path
 
 from manifesto.cli import main
 from manifesto.cluster import load_cluster
+from manifesto.render import render
+from manifesto.spec import load_spec
 import manifesto.workflow as workflow
-from manifesto.workflow import config_home, resolve_cluster, resolve_model
+from manifesto.workflow import MANAGED_RESOURCE_TYPES, config_home, resolve_cluster, resolve_model
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT / "models" / "deepseek-v4" / "1P-EP8-1D-EP8.yaml"
 STANDALONE_MODEL = ROOT / "models" / "qwen" / "aggregated.yaml"
 CLUSTER = ROOT / "clusters" / "oci-gb200.yaml"
+
+
+def _live_object(kind, name, instance, *, api_version="v1", labels=None, ready=False):
+    conditions = [{"type": "Ready", "status": "True"}] if ready else []
+    return {
+        "apiVersion": api_version,
+        "kind": kind,
+        "metadata": {
+            "name": name,
+            "creationTimestamp": "2026-07-21T12:00:00Z",
+            "labels": {
+                "app.kubernetes.io/name": "manifesto",
+                "app.kubernetes.io/instance": instance,
+                **(labels or {}),
+            },
+        },
+        "status": {"conditions": conditions},
+    }
+
+
+def _mock_discovery(monkeypatch, responses):
+    get_responses = iter(responses)
+
+    def fake_capture(cmd, **_):
+        if "api-resources" in cmd:
+            return "deployments.apps\npods\nservices\n"
+        if "get" in cmd:
+            return json.dumps({"items": next(get_responses)})
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(workflow, "capture", fake_capture)
 
 
 def test_user_config_catalog_resolves_models_and_clusters(monkeypatch, tmp_path):
@@ -293,3 +327,179 @@ def test_apply_file_does_not_require_cluster(monkeypatch, tmp_path):
 
     assert rc == 0
     assert calls == [(["kubectl", "-n", "workload-ns", "apply", "-f", str(output)], None)]
+
+
+def test_servers_lists_all_instances_in_namespace(monkeypatch, capsys):
+    objects = [
+        _live_object(
+            "Deployment",
+            "alice-model",
+            "alice-qwen",
+            api_version="apps/v1",
+            labels={"llm-d.ai/model": "qwen", "llm-d.ai/role": "decode"},
+        ),
+        _live_object(
+            "Pod",
+            "alice-model-1",
+            "alice-qwen",
+            labels={"llm-d.ai/model": "qwen", "llm-d.ai/role": "decode"},
+            ready=True,
+        ),
+        _live_object(
+            "Deployment",
+            "bob-model",
+            "bob-deepseek",
+            api_version="apps/v1",
+            labels={"llm-d.ai/model": "deepseek", "llm-d.ai/role": "prefill"},
+        ),
+    ]
+    _mock_discovery(monkeypatch, [objects])
+
+    rc = main(["servers", "--namespace", "workload-ns"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "alice-qwen" in out and "Ready" in out and "1/1" in out
+    assert "bob-deepseek" in out and "Pending" in out
+
+
+def test_servers_json_exposes_exact_resources(monkeypatch, capsys):
+    objects = [
+        _live_object("Service", "alice-route", "alice-qwen"),
+        _live_object("Pod", "alice-model-1", "alice-qwen", ready=True),
+    ]
+    _mock_discovery(monkeypatch, [objects])
+
+    rc = main(["servers", "--namespace", "workload-ns", "--instance", "alice-qwen", "--output", "json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["instance"] == "alice-qwen"
+    assert payload[0]["pods"] == {"ready": 1, "total": 1}
+    assert payload[0]["resources"] == [
+        {"apiVersion": "v1", "kind": "Pod", "name": "alice-model-1"},
+        {"apiVersion": "v1", "kind": "Service", "name": "alice-route"},
+    ]
+
+
+def test_stop_spec_discovers_live_state_without_cluster_profile(monkeypatch, capsys):
+    objects = [
+        _live_object(
+            "Deployment",
+            "tester-wide-ep-1p-ep8-1d-ep8-decode",
+            "tester-wide-ep-1p-ep8-1d-ep8",
+            api_version="apps/v1",
+        ),
+        _live_object("Pod", "decode-0", "tester-wide-ep-1p-ep8-1d-ep8", ready=True),
+    ]
+    _mock_discovery(monkeypatch, [objects, [], []])
+    calls = []
+    monkeypatch.setenv("MANIFESTO_NAMESPACE", "workload-ns")
+    monkeypatch.setenv("USER", "tester")
+    monkeypatch.delenv("MANIFESTO_CLUSTER", raising=False)
+    monkeypatch.setattr(workflow, "run", lambda cmd, **_: calls.append(cmd) or 0)
+
+    rc = main(["stop", str(MODEL)])
+
+    assert rc == 0
+    assert calls == [[
+        "kubectl",
+        "-n",
+        "workload-ns",
+        "delete",
+        "deployments.apps/tester-wide-ep-1p-ep8-1d-ep8-decode",
+        "--ignore-not-found=true",
+    ]]
+    assert "Stopped tester-wide-ep-1p-ep8-1d-ep8." in capsys.readouterr().out
+
+
+def test_stop_instance_is_idempotent(monkeypatch, capsys):
+    _mock_discovery(monkeypatch, [[]])
+
+    rc = main(["stop", "--instance", "alice-qwen", "--namespace", "workload-ns"])
+
+    assert rc == 0
+    assert "already absent" in capsys.readouterr().out
+
+
+def test_bare_stop_requires_tty(monkeypatch, capsys):
+    monkeypatch.setattr(workflow.sys.stdin, "isatty", lambda: False)
+
+    rc = main(["stop", "--namespace", "workload-ns"])
+
+    assert rc == 2
+    assert "interactive selection requires a TTY" in capsys.readouterr().err
+
+
+def test_bare_stop_uses_numbered_picker_without_fzf(monkeypatch, capsys):
+    objects = [
+        _live_object("Deployment", "alice-model", "alice-qwen", api_version="apps/v1"),
+        _live_object("Pod", "alice-model-1", "alice-qwen", ready=True),
+    ]
+    _mock_discovery(monkeypatch, [objects, [], []])
+    calls = []
+    monkeypatch.setattr(workflow.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(workflow.shutil, "which", lambda _: None)
+    monkeypatch.setattr("builtins.input", lambda _: "1")
+    monkeypatch.setattr(workflow, "run", lambda cmd, **_: calls.append(cmd) or 0)
+
+    rc = main(["stop", "--namespace", "workload-ns"])
+
+    assert rc == 0
+    assert calls[0][3:6] == ["delete", "deployments.apps/alice-model", "--ignore-not-found=true"]
+    assert "Stopped alice-qwen." in capsys.readouterr().out
+
+
+def test_picker_uses_fzf_with_resource_preview(monkeypatch):
+    record = workflow.ServerRecord(
+        "alice-qwen",
+        (workflow.LiveResource("apps/v1", "Deployment", "alice-model", {}),),
+    )
+    captured = {}
+
+    class Result:
+        returncode = 0
+        stdout = "alice-qwen\tReady\tqwen\tdecode\t1/1\t2h\n"
+
+    monkeypatch.setattr(workflow.shutil, "which", lambda _: "/usr/bin/fzf")
+    monkeypatch.setattr(
+        workflow.subprocess,
+        "run",
+        lambda cmd, **kwargs: captured.update(cmd=cmd, kwargs=kwargs) or Result(),
+    )
+    config = workflow.RuntimeConfig("tester", "workload-ns", None, Path("/tmp/rendered.yaml"))
+
+    assert workflow.pick_server([record], config) == record
+    assert any("servers --namespace workload-ns --instance" in arg for arg in captured["cmd"])
+    assert captured["kwargs"]["input"].startswith("alice-qwen\t")
+
+
+def test_stop_now_preserves_force_delete_flags(monkeypatch):
+    objects = [_live_object("Deployment", "alice-model", "alice-qwen", api_version="apps/v1")]
+    _mock_discovery(monkeypatch, [objects, [], []])
+    calls = []
+    monkeypatch.setattr(workflow, "run", lambda cmd, **_: calls.append(cmd) or 0)
+
+    rc = main(["stop", "--namespace", "workload-ns", "--instance", "alice-qwen", "--now"])
+
+    assert rc == 0
+    assert calls[0][-2:] == ["--grace-period=0", "--force"]
+
+
+def test_completion_scripts_include_live_instance_completion(capsys):
+    assert main(["completion", "bash"]) == 0
+    bash = capsys.readouterr().out
+    assert "complete -F _manifesto_complete manifesto" in bash
+    assert "manifesto servers" in bash
+
+    assert main(["completion", "zsh"]) == 0
+    zsh = capsys.readouterr().out
+    assert "compdef _manifesto manifesto" in zsh
+    assert "_manifesto_live_instances" in zsh
+
+
+def test_teardown_allowlist_covers_every_rendered_kind():
+    cluster = load_cluster(CLUSTER)
+    objects = render(load_spec(MODEL, cluster), user="tester", cluster=cluster)
+
+    assert {(obj["apiVersion"], obj["kind"]) for obj in objects} <= set(MANAGED_RESOURCE_TYPES)
