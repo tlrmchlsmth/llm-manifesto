@@ -69,7 +69,10 @@ manifesto ready models/deepseek-v4/1P-EP8-1D-EP8.yaml
 Stop the instance:
 
 ```bash
+manifesto servers
+manifesto stop                         # interactive picker
 manifesto stop models/deepseek-v4/1P-EP8-1D-EP8.yaml
+manifesto stop --instance "$USER-wide-ep-1p-ep8-1d-ep8"
 manifesto stop models/deepseek-v4/1P-EP8-1D-EP8.yaml --now
 ```
 
@@ -336,10 +339,32 @@ cluster-touching commands.
 
 ```bash
 manifesto deploy SPEC *ARGS          # render and apply a full stack
-manifesto stop SPEC [--now]          # delete instance-scoped objects
+manifesto servers                    # list live servers in the namespace
+manifesto stop [SPEC] [--now]        # discover and delete live objects
+manifesto stop --instance ID         # stop by live instance identity
 manifesto ready SPEC                 # wait for pods and gateway to serve
 manifesto deploy-routing SPEC *ARGS  # update routing only
 ```
+
+`manifesto stop` is stateless: it finds live objects through their Manifesto
+instance labels and does not depend on a stored manifest or deployment
+inventory. With no target it opens an `fzf` picker, or a numbered picker when
+`fzf` is unavailable. Selecting an entry starts teardown immediately. Explicit
+spec and `--instance` targets remain noninteractive and are safe for scripts.
+
+Teardown removes routing, model workloads, supporting objects, and remaining
+instance pods. It does not drain active requests or delete shared logs, caches,
+or model storage. `--now` retains the force-delete behavior.
+
+Enable dynamic completion for live instance IDs and local spec paths:
+
+```bash
+source <(manifesto completion zsh)   # zsh
+source <(manifesto completion bash)  # bash
+```
+
+For scripts, `manifesto servers --output name` prints one instance ID per line,
+and `--output json` includes the exact resources associated with each instance.
 
 Examples:
 
@@ -347,6 +372,7 @@ Examples:
 manifesto deploy models/qwen/aggregated.yaml
 manifesto deploy models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 manifesto deploy-routing models/deepseek-v4/1P-EP8-1D-EP8.yaml
+manifesto stop
 just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode
 just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode -f
 ```

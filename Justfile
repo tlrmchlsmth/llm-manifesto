@@ -46,7 +46,7 @@ start SPEC *ARGS='':
 deploy-routing SPEC *ARGS='':
   uv run manifesto deploy-routing {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ARGS}}
 
-stop SPEC NOW='false':
+stop SPEC='' NOW='false':
   uv run manifesto stop {{SPEC}} --namespace {{NAMESPACE}} --user {{NAME_PREFIX}} {{ if NOW == 'true' { '--now' } else { '' } }}
 
 restart SPEC *ARGS='':

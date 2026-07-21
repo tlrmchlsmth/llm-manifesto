@@ -10,7 +10,7 @@ this repository.
   a Justfile recipe exists for the workflow, because recipes handle user
   namespacing and render-time defaults.
 - Use the renderer-first commands: `just start SPEC *ARGS`, `just restart SPEC
-  *ARGS`, `just stop SPEC [NOW]`, and `just ready SPEC`.
+  *ARGS`, `just stop [SPEC] [NOW]`, and `just ready SPEC`.
 
 ## Repository Overview
 
@@ -70,6 +70,7 @@ just apply-file
 just start models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
 just ready models/deepseek-v4/1P-EP8-1D-EP8.yaml
 just restart models/deepseek-v4/1P-EP8-1D-EP8.yaml --dev
+just stop
 just stop models/deepseek-v4/1P-EP8-1D-EP8.yaml
 just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode
 just logs models/deepseek-v4/1P-EP8-1D-EP8.yaml decode -f
