@@ -179,6 +179,13 @@ Image versions are centralized in `config/images.yaml`. Model specs should use
 `model.image_ref`, with `vllm.standard` as the shared vLLM image reference,
 unless a spec needs an explicit one-off `model.image`.
 
+Manifesto applies shared vLLM arguments before role-specific `vllm:` and
+computed arguments. By default, Uvicorn access logs omit the high-frequency
+`/health`, `/v1/models`, and `/metrics` endpoints while preserving inference
+request logs. A role can replace the excluded endpoint list with
+`vllm.disable_access_log_for_endpoints`, or set it to `null` to omit the
+Manifesto default entirely.
+
 Specs can also extend a base YAML file and override only the fields that differ:
 
 ```yaml

@@ -19,5 +19,4 @@ roles:
     routing_proxy: true
     resources: {cpu: "32", memory: 512Gi, gpus: 4, ephemeral_storage: 128Gi}
     vllm:
-      disable_uvicorn_access_log: true
       trust_remote_code: true

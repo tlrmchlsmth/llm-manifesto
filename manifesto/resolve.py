@@ -13,6 +13,11 @@ from .parallelism import ParallelLayout, parallel_layout
 from .spec import DeploymentSpec, RoleSpec
 
 
+DEFAULT_VLLM_ARGS: dict[str, Any] = {
+    "disable_access_log_for_endpoints": "/health,/v1/models,/metrics",
+}
+
+
 @dataclass(frozen=True)
 class ResolvedRole:
     ports: RolePorts
@@ -64,7 +69,7 @@ def resolve_role(spec: DeploymentSpec, instance: Instance, cluster: Cluster, rol
         dev_source=cluster.dev_source(user=instance.user_slug, release=instance.release_slug),
         fabric_profile=fabric_profile,
         env=env,
-        vllm_args=role.vllm_args | computed_vllm_args,
+        vllm_args=DEFAULT_VLLM_ARGS | role.vllm_args | computed_vllm_args,
         resource_claims=_resource_claims(cluster, fabric_profile),
     )
 

@@ -225,8 +225,21 @@ def test_no_dp_qwen_uses_single_port_and_no_dp_flags():
     ].items()
     assert [p["containerPort"] for p in container["ports"]] == [8000]
     assert "--data-parallel-size" not in script
+    assert "--disable-access-log-for-endpoints /health,/v1/models,/metrics" in script
+    assert "--disable-uvicorn-access-log" not in script
     assert "startupProbe" not in container
     assert infpool["spec"]["targetPorts"] == [{"number": 8000}]
+
+
+def test_null_role_vllm_arg_omits_manifesto_default():
+    spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
+    spec.role("decode").vllm_args["disable_access_log_for_endpoints"] = None
+
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    deployment = _find(objects, "Deployment", "decode")
+    script = deployment["spec"]["template"]["spec"]["containers"][0]["args"][0]
+
+    assert "--disable-access-log-for-endpoints" not in script
 
 
 def test_single_node_dp_uses_deployment_without_lws_environment():
