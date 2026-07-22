@@ -63,6 +63,16 @@ def test_user_config_catalog_resolves_models_and_clusters(monkeypatch, tmp_path)
     assert resolve_cluster("local") == str(cluster)
 
 
+def test_model_catalog_name_with_dot_resolves_without_yaml_suffix(monkeypatch, tmp_path):
+    user_config = tmp_path / "manifesto-config"
+    model = user_config / "models" / "qwen" / "qwen3-0.6b.yaml"
+    model.parent.mkdir(parents=True)
+    model.write_text("release: qwen3-0-6b\n")
+    monkeypatch.setenv("MANIFESTO_CONFIG_HOME", str(user_config))
+
+    assert resolve_model("qwen/qwen3-0.6b") == str(model)
+
+
 def test_cluster_named_for_current_context_is_selected(monkeypatch, tmp_path):
     user_config = tmp_path / "manifesto-config"
     cluster = user_config / "clusters" / "local-context.yaml"
