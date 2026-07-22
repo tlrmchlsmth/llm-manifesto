@@ -223,8 +223,8 @@ def resolve_model(value: str) -> str:
 def _resolve_catalog_path(value: str, catalog: str) -> str:
     path = Path(value).expanduser()
     variants = [path]
-    if not path.suffix:
-        variants.append(path.with_suffix(".yaml"))
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        variants.append(Path(f"{path}.yaml"))
 
     for candidate in variants:
         if candidate.exists():
