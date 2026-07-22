@@ -42,7 +42,6 @@ roles:
       ephemeral_storage: 128Gi
     vllm:
       load_format: auto
-      disable_uvicorn_access_log: true
       gpu_memory_utilization: "0.85"
       trust_remote_code: true
       no_disable_hybrid_kv_cache_manager: true
@@ -84,7 +83,6 @@ roles:
       ephemeral_storage: 128Gi
     vllm:
       load_format: auto
-      disable_uvicorn_access_log: true
       trust_remote_code: true
       moe_backend: deep_gemm_mega_moe
       gpu_memory_utilization: "0.85"

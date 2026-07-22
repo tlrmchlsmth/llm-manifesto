@@ -26,6 +26,8 @@ def _format_value(value: Any) -> str:
 
 
 def _format_arg(name: str, value: Any) -> list[str]:
+    if value is None:
+        return []
     flag = _flag_name(name)
     if "." in name:
         return [f"{flag}={shlex.quote(_format_value(value))}"]

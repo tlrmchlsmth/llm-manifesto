@@ -34,6 +34,17 @@ def test_compact_parallelism_and_equations_resolve_to_runtime_values():
     assert resolved.vllm_args["max_num_batched_tokens"] == 1024
     assert resolved.vllm_args["max_num_seqs"] == 1024
     assert resolved.vllm_args["max_cudagraph_capture_size"] == 1024
+    assert resolved.vllm_args["disable_access_log_for_endpoints"] == "/health,/v1/models,/metrics"
+
+
+def test_role_vllm_args_override_manifesto_defaults():
+    spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
+    role = spec.role("decode")
+    role.vllm_args["disable_access_log_for_endpoints"] = "/health"
+
+    resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)
+
+    assert resolved.vllm_args["disable_access_log_for_endpoints"] == "/health"
 
 
 def test_fabric_profiles_are_cluster_config_driven():
